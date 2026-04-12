@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python:*)",
+      "Bash(curl -s -X POST http://localhost:8001/api/run -H 'Content-Type: application/json' -d '{\"goal\":\"test\"}')",
+      "Bash(curl -s -X POST http://localhost:8001/api/run -H 'Content-Type: application/json' -d '{\"goal\":\"BMS overvoltage test\"}')",
+      "Bash(curl -s -X POST http://localhost:8001/api/run -H 'Content-Type: application/json' -d '{\"goal\":\"BMS overvoltage protection at 4.2V with 100ms response\"}' --max-time 30)",
+      "Bash(kill %1)"
+    ]
+  }
+}

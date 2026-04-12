@@ -1,0 +1,137 @@
+# =============================================================================
+# Test Scenario Library
+# =============================================================================
+# Each scenario defines: what to do, what to measure, how to judge PASS/FAIL.
+# The AI Planner can reference these or generate new ones dynamically.
+
+scenarios:
+
+  # --- BMS Protection Tests ---
+  ovp_single_cell:
+    description: "Single cell overvoltage protection"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.1"
+    parameters:
+      target_cell: 1
+      normal_voltage: 3.6
+      fault_voltage: 4.5
+      ramp_duration_s: 0.2
+    measurements:
+      - "V_cell_{target_cell}"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 100
+      trip_voltage_tolerance: 0.05     # V_trip should be within 4.2 +/- 0.05V
+
+  ovp_boundary:
+    description: "Overvoltage boundary (must NOT trip)"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.1"
+    parameters:
+      target_cell: 1
+      test_voltage: 4.19
+      hold_duration_s: 1.0
+    measurements:
+      - "V_cell_{target_cell}"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      relay_must_not_trip: true
+
+  ovp_multi_cell:
+    description: "Simultaneous multi-cell overvoltage"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.1"
+    parameters:
+      target_cells: [1, 6, 12]
+      fault_voltage: 4.5
+      ramp_duration_s: 0.2
+    measurements:
+      - "V_cell_1"
+      - "V_cell_6"
+      - "V_cell_12"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 100
+
+  uvp_single_cell:
+    description: "Single cell undervoltage protection"
+    category: "protection"
+    parameters:
+      target_cell: 1
+      normal_voltage: 3.6
+      fault_voltage: 2.0
+      ramp_duration_s: 0.5
+    measurements:
+      - "V_cell_{target_cell}"
+      - "BMS_UVP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 200
+
+  ocp_pack:
+    description: "Pack overcurrent protection"
+    category: "protection"
+    parameters:
+      normal_current: 50.0
+      fault_current: 250.0
+      ramp_duration_s: 0.01
+    measurements:
+      - "I_pack"
+      - "BMS_OCP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 50
+
+  # --- PCS / Inverter Tests ---
+  lvrt_basic:
+    description: "Low Voltage Ride-Through basic"
+    category: "grid_compliance"
+    standard_ref: "IEC 61727 / KS C 8564"
+    parameters:
+      grid_voltage_pu: 0.7
+      fault_time_ms: 100
+      fault_duration_ms: 200
+    measurements:
+      - "dc_link_voltage"
+      - "grid_current"
+      - "active_power"
+      - "reactive_power"
+    pass_fail_rules:
+      dc_link_ripple_max: 0.05
+      current_peak_max_pu: 1.2
+      must_stay_connected: true
+
+  # --- Converter Tests ---
+  boost_regulation:
+    description: "Boost converter output voltage regulation"
+    category: "control_performance"
+    parameters:
+      input_voltage: 200
+      output_voltage_ref: 400
+      load_step_percent: 50
+    measurements:
+      - "V_out"
+      - "I_L"
+      - "duty_cycle"
+    pass_fail_rules:
+      steady_state_error_max_percent: 2.0
+      overshoot_max_percent: 10.0
+      settling_time_max_ms: 50
+
+  # --- Sensor Fault Tests ---
+  sensor_disconnect:
+    description: "Voltage sensor disconnection fault"
+    category: "fault_tolerance"
+    parameters:
+      target_sensor: "V_cell_1"
+      fault_type: "sensor_disconnect"
+    measurements:
+      - "V_cell_1"
+      - "BMS_fault_flag"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      fault_detected: true
+      detection_time_max_ms: 500
+      safe_shutdown: true

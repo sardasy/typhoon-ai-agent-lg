@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THAA Test Report — {{ plan_id }}</title>
+<style>
+  :root {
+    --pass: #16a34a; --fail: #dc2626; --warn: #d97706;
+    --skip: #6b7280; --bg: #f8fafc; --card: #fff;
+    --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    padding: 2rem; max-width: 1100px; margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; }
+  .subtitle { color: var(--muted); font-size: 0.875rem; margin-bottom: 1.5rem; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 2rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem; text-align: center;
+  }
+  .card .num { font-size: 1.75rem; font-weight: 700; }
+  .card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .card.pass .num { color: var(--pass); }
+  .card.fail .num { color: var(--fail); }
+  .card.warn .num { color: var(--warn); }
+  .card.skip .num { color: var(--skip); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: #f1f5f9; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 10px 12px; text-align: left; }
+  td { padding: 10px 12px; font-size: 0.875rem; border-top: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: #f8fafc; }
+
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  }
+  .badge.pass { background: #dcfce7; color: var(--pass); }
+  .badge.fail { background: #fef2f2; color: var(--fail); }
+  .badge.conditional_pass { background: #fefce8; color: var(--warn); }
+  .badge.skipped { background: #f3f4f6; color: var(--skip); }
+  .badge.error { background: #fef2f2; color: var(--fail); }
+
+  .reason { color: var(--fail); font-size: 0.8rem; margin-top: 4px; }
+  .rootcause { color: var(--warn); font-size: 0.8rem; margin-top: 2px; font-style: italic; }
+  .section-title { font-size: 1.1rem; font-weight: 600; margin: 2rem 0 0.75rem; }
+  .coverage-list { list-style: none; padding: 0; }
+  .coverage-list li { padding: 4px 0; font-size: 0.875rem; }
+  .coverage-list li::before { content: "\2713 "; color: var(--pass); font-weight: bold; }
+  .footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>HIL Test Report</h1>
+<p class="subtitle">{{ plan_goal }} &mdash; {{ generated_at }}</p>
+
+<!-- Summary cards -->
+<div class="cards">
+  <div class="card"><div class="num">{{ total }}</div><div class="label">Total</div></div>
+  <div class="card pass"><div class="num">{{ passed }}</div><div class="label">Passed</div></div>
+  <div class="card fail"><div class="num">{{ failed }}</div><div class="label">Failed</div></div>
+  <div class="card warn"><div class="num">{{ conditional_pass }}</div><div class="label">Conditional</div></div>
+  <div class="card skip"><div class="num">{{ skipped }}</div><div class="label">Skipped</div></div>
+  <div class="card"><div class="num">{{ pass_rate }}%</div><div class="label">Pass rate</div></div>
+</div>
+
+<!-- Strategy -->
+{% if plan_strategy %}
+<div class="section-title">Test strategy</div>
+<p style="font-size: 0.9rem; margin-bottom: 1rem;">{{ plan_strategy }}</p>
+{% endif %}
+
+<!-- Results table -->
+<div class="section-title">Test results</div>
+<table>
+<thead>
+  <tr>
+    <th style="width:22%">Scenario</th>
+    <th style="width:10%">Category</th>
+    <th style="width:8%">Status</th>
+    <th style="width:7%">Time</th>
+    <th style="width:5%">Retry</th>
+    <th>Details</th>
+  </tr>
+</thead>
+<tbody>
+{% for r in results %}
+  <tr>
+    <td><strong>{{ r.name }}</strong><br><span style="font-size:0.75rem;color:var(--muted)">{{ r.scenario_id }}</span></td>
+    <td>{{ r.category }}</td>
+    <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+    <td>{{ r.duration_s }}s</td>
+    <td>{{ r.retry_count }}</td>
+    <td>
+      {% if r.fail_reason %}<div class="reason">{{ r.fail_reason }}</div>{% endif %}
+      {% if r.root_cause %}<div class="rootcause">Root cause: {{ r.root_cause }}</div>{% endif %}
+      {% if r.waveform_stats %}
+        {% for s in r.waveform_stats %}
+          <span style="font-size:0.75rem;color:var(--muted)">{{ s.signal }}: mean={{ s.mean }}, max={{ s.max }}</span><br>
+        {% endfor %}
+      {% endif %}
+    </td>
+  </tr>
+{% endfor %}
+</tbody>
+</table>
+
+<!-- Standards coverage -->
+{% if standard_coverage %}
+<div class="section-title">Standards coverage</div>
+<ul class="coverage-list">
+{% for std, scenarios in standard_coverage.items() %}
+  <li><strong>{{ std }}</strong>: {{ scenarios | join(', ') }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<div class="footer">
+  Generated by Typhoon HIL AI Agent (THAA) &mdash; Plan {{ plan_id }} &mdash;
+  Milim Syscon
+</div>
+
+</body>
+</html>

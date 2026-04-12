@@ -1,0 +1,57 @@
+# =============================================================================
+# Typhoon HIL Model & Hardware Configuration
+# =============================================================================
+
+model:
+  path: "models/bms_pack_12s.tse"
+  timestep_us: 1.0                    # simulation timestep in microseconds
+  compile_on_load: true
+
+hil_device:
+  serial: "auto"                       # "auto" = first available device
+  # serial: "600-001-234"              # specific device serial
+
+io_mapping:
+  analog_outputs:                      # HIL -> ECU (sensor feedback)
+    - signal: "V_cell_1"
+      channel: 1
+      scale: 1.0
+      offset: 0.0
+    - signal: "I_pack"
+      channel: 2
+      scale: 0.1                       # 100A -> 10V
+      offset: 0.0
+  digital_inputs:                      # ECU -> HIL (control signals)
+    - signal: "BMS_OVP_relay"
+      channel: 1
+      threshold: 2.5
+  communication:
+    can:
+      enabled: true
+      bitrate: 500000
+      channel: 1
+
+# DUT mode: "hil_model" or "real_ecu"
+dut_mode: "hil_model"
+
+# pyXCP config (used when dut_mode: "real_ecu")
+xcp:
+  transport: "CAN"
+  a2l_path: "ecu/bms_v2.a2l"
+  can_channel: 1
+  can_id_master: 0x600
+  can_id_slave: 0x601
+
+# Safety limits
+safety:
+  max_voltage: 60.0
+  max_current: 200.0
+  max_fault_injections: 10
+  auto_retry_limit: 3
+  timeout_per_test_s: 30.0
+
+# AI Agent
+ai:
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4096
+  temperature: 0.0                     # deterministic for test generation
