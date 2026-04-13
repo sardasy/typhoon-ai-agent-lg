@@ -14,11 +14,13 @@ import datetime
 import json
 import logging
 import os
+import re
 import sys
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(Path(__file__).parent / ".env", override=True)
 except ImportError:
     pass  # python-dotenv optional
 
@@ -60,6 +62,15 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
         "events": [],
         "report_path": "",
         "error": "",
+        # HTAF codegen fields
+        "tse_content": "",
+        "tse_path": "",
+        "parsed_tse": None,
+        "test_requirements": [],
+        "generated_files": {},
+        "codegen_validation": None,
+        "export_path": "",
+        "codegen_mode": "mock",
     }
 
 
@@ -70,8 +81,9 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
 async def run_cli(goal: str, config_path: str):
     """Stream graph execution to terminal."""
     try:
+        import io, sys as _sys
         from rich.console import Console
-        console = Console()
+        console = Console(file=io.TextIOWrapper(_sys.stdout.buffer, encoding="utf-8", errors="replace"))
         HAS_RICH = True
     except ImportError:
         HAS_RICH = False
@@ -237,6 +249,156 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "framework": "langgraph"}
+
+    # --- Report endpoints ---------------------------------------------------
+
+    @app.get("/api/reports")
+    async def list_reports():
+        """List HTML reports from reports/ directory."""
+        import re
+        reports_dir = Path(__file__).parent / "reports"
+        if not reports_dir.exists():
+            return []
+        result = []
+        pattern = re.compile(r"^report_\d{8}_\d{6}\.html$")
+        for f in sorted(reports_dir.iterdir(), reverse=True):
+            if f.suffix == ".html" and pattern.match(f.name):
+                # Extract timestamp from filename
+                ts_part = f.name.removeprefix("report_").removesuffix(".html")
+                ts_fmt = ""
+                if len(ts_part) == 15:  # 20260413_144253
+                    ts_fmt = f"{ts_part[:4]}-{ts_part[4:6]}-{ts_part[6:8]} {ts_part[9:11]}:{ts_part[11:13]}:{ts_part[13:15]}"
+                result.append({
+                    "filename": f.name,
+                    "timestamp": ts_fmt,
+                    "size_bytes": f.stat().st_size,
+                })
+        return result
+
+    @app.get("/api/reports/{filename}")
+    async def get_report(filename: str):
+        """Serve a specific HTML report file."""
+        import re
+        from fastapi.responses import Response
+        pattern = re.compile(r"^report_\d{8}_\d{6}\.html$")
+        if not pattern.match(filename):
+            return JSONResponse({"error": "invalid filename"}, status_code=400)
+        report_path = Path(__file__).parent / "reports" / filename
+        if not report_path.exists():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        html = report_path.read_text(encoding="utf-8")
+        return Response(content=html, media_type="text/html")
+
+    # --- HTAF codegen endpoints -----------------------------------------------
+
+    @app.post("/api/upload-tse")
+    async def upload_tse():
+        """Accept a .tse file upload via multipart form."""
+        from fastapi import UploadFile, File
+        # Re-define to get proper signature for FastAPI
+        pass
+
+    # Use a separate decorated function to avoid FastAPI param issues
+    @app.post("/api/upload-tse", include_in_schema=False)
+    async def _upload_tse_impl(file: bytes = None):
+        pass
+
+    # Remove duplicate and define properly
+    app.routes = [r for r in app.routes if not (hasattr(r, 'path') and r.path == '/api/upload-tse')]
+
+    from fastapi import UploadFile, File as FastAPIFile
+
+    @app.post("/api/upload-tse")
+    async def upload_tse(file: UploadFile):
+        """Accept a .tse file upload."""
+        if not file.filename.endswith(".tse"):
+            return JSONResponse({"error": "Only .tse files accepted"}, status_code=400)
+        content = await file.read()
+        if len(content) > 10 * 1024 * 1024:  # 10MB limit
+            return JSONResponse({"error": "File too large (max 10MB)"}, status_code=400)
+        text = content.decode("utf-8", errors="replace")
+        # Store in uploads dir
+        uploads_dir = Path(__file__).parent / "uploads"
+        uploads_dir.mkdir(exist_ok=True)
+        safe_name = re.sub(r"[^\w.\-]", "_", file.filename)
+        (uploads_dir / safe_name).write_text(text, encoding="utf-8")
+        return {
+            "filename": safe_name,
+            "size": len(content),
+            "preview": text[:200],
+        }
+
+    class CodegenRequest(BaseModel):
+        tse_content: str
+        tse_path: str = "uploaded.tse"
+        mode: str = "mock"
+
+    @app.post("/api/generate-tests")
+    async def api_generate_tests(body: CodegenRequest):
+        """Run the HTAF codegen pipeline and stream events via SSE."""
+        from src.graph_codegen import compile_codegen_graph
+
+        async def stream():
+            try:
+                graph_app = compile_codegen_graph()
+                initial = make_initial_state("", config_path)
+                initial["tse_content"] = body.tse_content
+                initial["tse_path"] = body.tse_path
+                initial["codegen_mode"] = body.mode
+
+                async for step in graph_app.astream(initial):
+                    for node_name, update in step.items():
+                        if node_name == "__end__":
+                            continue
+                        for ev in update.get("events", []):
+                            yield {
+                                "event": ev.get("event_type", "observation"),
+                                "data":  _sse_payload(ev),
+                            }
+                        # Send generated files in the final step
+                        if "generated_files" in update:
+                            yield {
+                                "event": "files",
+                                "data": json.dumps({
+                                    "node": "generate_tests",
+                                    "message": "Generated files",
+                                    "data": {"files": update["generated_files"]},
+                                    "timestamp": datetime.datetime.now(
+                                        datetime.timezone.utc
+                                    ).isoformat(),
+                                }),
+                            }
+            except Exception as exc:
+                logger.exception("Codegen pipeline failed")
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "node": "system",
+                        "message": str(exc),
+                        "data": {},
+                        "timestamp": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                    }),
+                }
+
+        return EventSourceResponse(stream())
+
+    @app.get("/api/download-tests/{filename}")
+    async def download_tests(filename: str):
+        """Download a generated test ZIP file."""
+        from fastapi.responses import FileResponse
+        pattern = re.compile(r"^[\w\-]+\.zip$")
+        if not pattern.match(filename):
+            return JSONResponse({"error": "invalid filename"}, status_code=400)
+        zip_path = Path(__file__).parent / "output" / "generated_tests" / filename
+        if not zip_path.exists():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=filename,
+        )
 
     logger.info(f"Starting THAA LangGraph dashboard on {host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")

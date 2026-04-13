@@ -72,6 +72,52 @@ class DiagnosisResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# HTAF Code Generation models
+# ---------------------------------------------------------------------------
+
+class ParsedSignal(BaseModel):
+    """A signal extracted from a .tse model file."""
+    name: str
+    signal_type: str = "analog"           # analog | digital
+    source_type: str = ""                 # voltage_measurement | current_measurement | probe | scada
+    direction: str = "output"             # input | output
+
+
+class ParsedTSE(BaseModel):
+    """Result of parsing a .tse Typhoon HIL model file."""
+    model_name: str = ""
+    topology: str = "unknown"             # boost | buck | inverter | dab | flyback | unknown
+    fmt: str = "dsl"                      # dsl | xml
+    analog_signals: list[str] = Field(default_factory=list)
+    digital_signals: list[str] = Field(default_factory=list)
+    sources: dict[str, float] = Field(default_factory=dict)
+    scada_inputs: dict[str, float] = Field(default_factory=dict)
+    sim_time_step: float = 1e-6
+    dsp_timer_periods: float = 100e-6
+    control_params: dict[str, Any] = Field(default_factory=dict)
+    components: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class VerificationRequirement(BaseModel):
+    """A single test requirement derived from topology analysis."""
+    req_id: str
+    name: str
+    metric: str                           # output_voltage | ripple | settling_time | rms_voltage | phase_shift
+    target_value: float = 0
+    tolerance_fraction: float = 0.05
+    duration_s: float = 0.5
+    sampling_rate_hz: int = 50000
+    topology_specific: bool = False
+
+
+class CodegenValidationResult(BaseModel):
+    """Result of validating generated test code."""
+    valid: bool = True
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # LangGraph State
 # ---------------------------------------------------------------------------
 
@@ -119,6 +165,16 @@ class AgentState(TypedDict):
 
     # --- Control ---
     error: str                                       # non-empty = abort
+
+    # --- HTAF Code Generation (set by codegen pipeline) ---
+    tse_content: str                                 # uploaded .tse file content
+    tse_path: str                                    # original file path/name
+    parsed_tse: dict | None                          # ParsedTSE as dict
+    test_requirements: list[dict]                    # TestRequirement dicts
+    generated_files: dict[str, str]                  # relative_path -> code content
+    codegen_validation: dict | None                  # CodegenValidationResult dict
+    export_path: str                                 # path to exported test suite
+    codegen_mode: str                                # "mock" or "typhoon"
 
 
 def make_event(
