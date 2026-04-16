@@ -365,3 +365,248 @@ class TestEndToEnd:
         assert s["codegen_validation"]["valid"] is True
         assert "test_mock_dab.py" in s["generated_files"]
         assert "MockHilRunner" in s["generated_files"]["test_mock_dab.py"]
+
+
+# ---------------------------------------------------------------------------
+# Tool: hil_api_docs (parses Typhoon HIL Sphinx docs for codegen context)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_HIL_HTML = """\
+<!DOCTYPE html><html><body>
+<dl class="py function">
+<dt id="typhoon.api.hil.load_model">
+<em class="property">function </em>
+typhoon.api.hil.<code class="sig-name">load_model</code>(<em>file</em>, <em>vhil_device=False</em>)
+<a class="headerlink" href="#">[source]</a>
+</dt>
+<dd><p>Load a compiled HIL model file onto the device.</p></dd>
+</dl>
+<dl class="py function">
+<dt id="typhoon.api.hil.start_simulation">
+typhoon.api.hil.<code class="sig-name">start_simulation</code>()
+</dt>
+<dd><p>Start simulation on the HIL device.</p></dd>
+</dl>
+<dl class="py function">
+<dt id="typhoon.api.hil.set_scada_input_value">
+typhoon.api.hil.<code class="sig-name">set_scada_input_value</code>(<em>name</em>, <em>value</em>)
+</dt>
+<dd><p>Set a SCADA input to the given value.</p></dd>
+</dl>
+</body></html>
+"""
+
+
+class TestHilApiDocs:
+    def test_parses_sphinx_html(self, tmp_path):
+        from src.tools.hil_api_docs import HilApiDocsExecutor
+
+        doc = tmp_path / "hil_api.html"
+        doc.write_text(_SAMPLE_HIL_HTML, encoding="utf-8")
+
+        ex = HilApiDocsExecutor()
+        assert ex.load(str(doc)) is True
+        assert ex.count() == 3
+        assert ex.has("load_model")
+        assert ex.has("start_simulation")
+        assert ex.has("set_scada_input_value")
+
+        fn = ex.get("load_model")
+        assert fn is not None
+        assert "load_model" in fn.signature
+        assert "HIL model file" in fn.description
+
+    def test_missing_file_is_non_fatal(self, tmp_path):
+        from src.tools.hil_api_docs import HilApiDocsExecutor
+
+        ex = HilApiDocsExecutor()
+        assert ex.load(str(tmp_path / "does_not_exist.html")) is False
+        assert ex.is_loaded() is False
+        assert ex.unknown_calls("hil.foo()") == []  # empty index -> no flags
+
+    def test_unknown_calls_detection(self, tmp_path):
+        from src.tools.hil_api_docs import HilApiDocsExecutor
+
+        doc = tmp_path / "hil_api.html"
+        doc.write_text(_SAMPLE_HIL_HTML, encoding="utf-8")
+
+        ex = HilApiDocsExecutor()
+        ex.load(str(doc))
+
+        code = (
+            "hil.load_model('x.cpd')\n"
+            "hil.start_simulation()\n"
+            "hil.nonexistent_thing(1, 2)\n"
+        )
+        unknown = ex.unknown_calls(code)
+        assert unknown == ["nonexistent_thing"]
+
+
+class TestValidateCodeAgainstApi:
+    async def test_unknown_hil_call_warned(self, tmp_path, monkeypatch):
+        """validate_code flags hil.X() calls that aren't in hil_api.html."""
+        from src.tools import hil_api_docs as mod
+
+        doc = tmp_path / "hil_api.html"
+        doc.write_text(_SAMPLE_HIL_HTML, encoding="utf-8")
+
+        # Reset the singleton and point it at our tiny fixture doc
+        monkeypatch.setattr(mod, "_instance", None)
+        monkeypatch.setenv("THAA_HIL_API_DOC", str(doc))
+
+        files = {
+            "test_x.py": (
+                "import pytest\n"
+                "def test_a():\n"
+                "    hil.load_model('m.cpd')\n"
+                "    hil.bogus_function(1)\n"
+            )
+        }
+        result = await validate_code(_state(generated_files=files, codegen_mode="mock"))
+        v = result["codegen_validation"]
+        # Unknown API call should surface as warning, NOT error
+        assert v["valid"] is True
+        assert any("bogus_function" in w for w in v["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Tool: pytest_api (introspects installed pytest module for codegen)
+# ---------------------------------------------------------------------------
+
+class TestPytestApi:
+    def test_introspects_installed_pytest(self):
+        from src.tools.pytest_api import PytestApiExecutor
+
+        ex = PytestApiExecutor()
+        assert ex.load() is True
+        assert ex.is_loaded()
+        assert ex.version()                       # e.g. "9.0.2"
+        public = ex.list_public_api()
+        # A few stable symbols we can rely on across pytest versions
+        for name in ("fixture", "mark", "raises", "skip", "param", "fail"):
+            assert name in public, f"expected pytest.{name} in public API"
+
+    def test_builtin_markers(self):
+        from src.tools.pytest_api import PytestApiExecutor
+
+        ex = PytestApiExecutor()
+        ex.load()
+        markers = set(ex.list_builtin_markers())
+        for m in ("skip", "skipif", "xfail", "parametrize", "usefixtures"):
+            assert m in markers
+
+    def test_unknown_markers_respects_declared(self):
+        from src.tools.pytest_api import PytestApiExecutor
+
+        ex = PytestApiExecutor()
+        ex.load()
+        code = (
+            "@pytest.mark.parametrize('x', [1])\n"
+            "@pytest.mark.regulation\n"
+            "@pytest.mark.totally_made_up\n"
+            "def test_x(x): pass\n"
+        )
+        # "regulation" is declared in pytest.ini -> should not be flagged
+        unknown = ex.unknown_markers(code, declared={"regulation"})
+        assert unknown == ["totally_made_up"]
+
+    def test_unknown_pytest_attrs(self):
+        from src.tools.pytest_api import PytestApiExecutor
+
+        ex = PytestApiExecutor()
+        ex.load()
+        code = (
+            "pytest.fixture\n"
+            "pytest.raises\n"
+            "pytest.mark.anything\n"        # should be ignored (handled separately)
+            "pytest.not_a_real_helper\n"
+        )
+        unknown = ex.unknown_pytest_attrs(code)
+        assert unknown == ["not_a_real_helper"]
+
+    def test_parse_ini_markers(self):
+        from src.tools.pytest_api import parse_ini_markers
+
+        ini = (
+            "[pytest]\n"
+            "markers =\n"
+            "    regulation: Output regulation tests\n"
+            "    ripple: Ripple measurement tests\n"
+            "    # commented out marker\n"
+            "    settling: Settling time\n"
+            "timeout = 120\n"
+        )
+        assert parse_ini_markers(ini) == ["regulation", "ripple", "settling"]
+
+    def test_parse_ini_markers_empty(self):
+        from src.tools.pytest_api import parse_ini_markers
+
+        assert parse_ini_markers("") == []
+        assert parse_ini_markers("[pytest]\ntimeout = 120\n") == []
+
+
+class TestValidateCodeAgainstPytest:
+    async def test_unknown_marker_warned_without_pytest_ini(self, monkeypatch):
+        """Custom markers without a pytest.ini become warnings."""
+        from src.tools import pytest_api as mod
+
+        # Force reload so the singleton state is fresh
+        monkeypatch.setattr(mod, "_instance", None)
+        mod.get_pytest_api()
+
+        files = {
+            "test_x.py": (
+                "import pytest\n"
+                "@pytest.mark.regulation\n"   # not declared anywhere
+                "def test_a(): assert True\n"
+            )
+        }
+        result = await validate_code(_state(generated_files=files, codegen_mode="mock"))
+        v = result["codegen_validation"]
+        assert v["valid"] is True
+        assert any("regulation" in w and "not a builtin marker" in w
+                   for w in v["warnings"])
+
+    async def test_markers_declared_in_ini_not_warned(self, monkeypatch):
+        """When pytest.ini declares the marker, no warning is emitted."""
+        from src.tools import pytest_api as mod
+
+        monkeypatch.setattr(mod, "_instance", None)
+        mod.get_pytest_api()
+
+        files = {
+            "pytest.ini": (
+                "[pytest]\n"
+                "markers =\n"
+                "    regulation: Output regulation tests\n"
+            ),
+            "test_x.py": (
+                "import pytest\n"
+                "@pytest.mark.regulation\n"
+                "def test_a(): assert True\n"
+            ),
+        }
+        result = await validate_code(_state(generated_files=files, codegen_mode="typhoon"))
+        v = result["codegen_validation"]
+        assert v["valid"] is True
+        assert not any("regulation" in w and "not a builtin" in w
+                       for w in v["warnings"])
+
+    async def test_unknown_pytest_attr_warned(self, monkeypatch):
+        """pytest.X where X is not in public API is flagged as a warning."""
+        from src.tools import pytest_api as mod
+
+        monkeypatch.setattr(mod, "_instance", None)
+        mod.get_pytest_api()
+
+        files = {
+            "test_x.py": (
+                "import pytest\n"
+                "pytest.made_up_helper()\n"
+                "def test_a(): assert True\n"
+            )
+        }
+        result = await validate_code(_state(generated_files=files, codegen_mode="mock"))
+        v = result["codegen_validation"]
+        assert v["valid"] is True
+        assert any("made_up_helper" in w for w in v["warnings"])

@@ -37,6 +37,12 @@ class RunRequest(BaseModel):
     goal: str
 
 
+class CodegenRequest(BaseModel):
+    tse_content: str
+    tse_path: str = "uploaded.tse"
+    mode: str = "mock"
+
+
 # ---------------------------------------------------------------------------
 # Initial state factory
 # ---------------------------------------------------------------------------
@@ -166,7 +172,7 @@ def _sse_payload(ev: dict) -> str:
 
 def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
     import uvicorn
-    from fastapi import FastAPI
+    from fastapi import FastAPI, File, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import HTMLResponse, JSONResponse
     from sse_starlette.sse import EventSourceResponse
@@ -292,24 +298,7 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
     # --- HTAF codegen endpoints -----------------------------------------------
 
     @app.post("/api/upload-tse")
-    async def upload_tse():
-        """Accept a .tse file upload via multipart form."""
-        from fastapi import UploadFile, File
-        # Re-define to get proper signature for FastAPI
-        pass
-
-    # Use a separate decorated function to avoid FastAPI param issues
-    @app.post("/api/upload-tse", include_in_schema=False)
-    async def _upload_tse_impl(file: bytes = None):
-        pass
-
-    # Remove duplicate and define properly
-    app.routes = [r for r in app.routes if not (hasattr(r, 'path') and r.path == '/api/upload-tse')]
-
-    from fastapi import UploadFile, File as FastAPIFile
-
-    @app.post("/api/upload-tse")
-    async def upload_tse(file: UploadFile):
+    async def upload_tse(file=File(...)):  # type: ignore[no-untyped-def]
         """Accept a .tse file upload."""
         if not file.filename.endswith(".tse"):
             return JSONResponse({"error": "Only .tse files accepted"}, status_code=400)
@@ -327,11 +316,6 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
             "size": len(content),
             "preview": text[:200],
         }
-
-    class CodegenRequest(BaseModel):
-        tse_content: str
-        tse_path: str = "uploaded.tse"
-        mode: str = "mock"
 
     @app.post("/api/generate-tests")
     async def api_generate_tests(body: CodegenRequest):
@@ -453,6 +437,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="events" id="events"></div>
 <div class="summary" id="summary"></div>
 <script>
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 async function run(){
   const goal=document.getElementById('goal').value.trim();
   if(!goal)return;
@@ -460,21 +445,39 @@ async function run(){
   const ev=document.getElementById('events');
   const sm=document.getElementById('summary');
   btn.disabled=true; ev.innerHTML=''; sm.style.display='none';
-  const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({goal})});
+  let r;
+  try{
+    r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({goal})});
+  }catch(e){
+    ev.innerHTML='<div class="ev error"><span class="tag">ERROR</span> fetch failed: '+esc(e.message)+'</div>';
+    btn.disabled=false; return;
+  }
+  if(!r.ok||!r.body){
+    ev.innerHTML='<div class="ev error"><span class="tag">ERROR</span> HTTP '+r.status+'</div>';
+    btn.disabled=false; return;
+  }
   const rd=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+  let pendingEvent='';
+  const flush=(evtType,dataLine)=>{
+    if(!dataLine)return;
+    let d={};
+    try{d=JSON.parse(dataLine);}catch(e){return;}
+    const el=document.createElement('div');
+    const cls=(evtType||'thought').toLowerCase();
+    el.className='ev '+cls;
+    el.innerHTML='<span class="tag">'+esc(evtType||'event')+'</span><span class="nd">'+esc(d.node||'')+'</span> '+esc(d.message||'');
+    ev.appendChild(el); el.scrollIntoView({behavior:'smooth',block:'nearest'});
+  };
   while(true){
     const{done,value}=await rd.read(); if(done)break;
     buf+=dec.decode(value,{stream:true});
-    const lines=buf.split('\\n'); buf=lines.pop();
-    for(const l of lines){
-      if(!l.startsWith('data:'))continue;
-      try{
-        const d=JSON.parse(l.slice(5));
-        const el=document.createElement('div');
-        el.className='ev '+(d.event_type||'');
-        el.innerHTML='<span class="tag">'+(d.event_type||'')+'</span><span class="nd">'+(d.node||'')+'</span> '+(d.message||'');
-        ev.appendChild(el); el.scrollIntoView({behavior:'smooth'});
-      }catch(e){}
+    let idx;
+    while((idx=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,idx).replace(/\r$/,'');
+      buf=buf.slice(idx+1);
+      if(line===''){continue;}
+      if(line.startsWith('event:')){pendingEvent=line.slice(6).trim();continue;}
+      if(line.startsWith('data:')){flush(pendingEvent,line.slice(5).trim());pendingEvent='';continue;}
     }
   }
   btn.disabled=false;

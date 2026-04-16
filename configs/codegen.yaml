@@ -1,0 +1,43 @@
+# =============================================================================
+# HTAF Code Generation Configuration
+# =============================================================================
+#
+# Paths resolved by src/tools/hil_api_docs.py follow this priority:
+#   1. Explicit arg passed to get_hil_api_docs()
+#   2. Env var THAA_HIL_API_DOC
+#   3. codegen.yaml: hil_api_docs.path  (this file)
+#   4. Built-in default candidates (Program Files / C:/abc install)
+# =============================================================================
+
+hil_api_docs:
+  # Local Sphinx HTML reference shipped with Typhoon HIL Control Center.
+  # Used as RAG context during generate_tests and for cross-checking hil.XXX(...)
+  # calls during validate_code.
+  path: "C:/abc/Typhoon HIL Control Center 2026.1 sp1/Documentation/html/hil_api.html"
+
+  # When generated code calls hil.<name>(...) with <name> not found in the
+  # parsed API index, validate_code emits:
+  #   - "warning" (default) - non-blocking, surfaced in events/report
+  #   - "error"             - makes the codegen_validation.valid = False
+  unknown_call_severity: "warning"
+
+  # How many API members to list in the comment header injected into generated
+  # test files by generate_tests.
+  context_header_max_items: 30
+
+pytest_api:
+  # Reference repository: https://github.com/pytest-dev/pytest/
+  # We introspect the installed pytest module rather than cloning the repo.
+  # Used by generate_tests (context header) and validate_code (unknown
+  # markers / unknown pytest.X attribute accesses).
+  reference_url: "https://github.com/pytest-dev/pytest/"
+
+  # Severity for @pytest.mark.<name> markers that are neither built-in nor
+  # declared in a generated pytest.ini. "warning" | "error".
+  unknown_marker_severity: "warning"
+
+  # Severity for pytest.<name> attribute accesses not in pytest's public API.
+  unknown_attr_severity: "warning"
+
+  # How many public symbols to include in the context header.
+  context_header_max_items: 20
