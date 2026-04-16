@@ -294,7 +294,27 @@ These are the types of requests you will receive most often. Follow the patterns
 ```
 ANTHROPIC_API_KEY=sk-ant-...      # Required for Claude API calls
 QDRANT_URL=http://localhost:6333  # Optional, for RAG
+
+# LangSmith tracing (all optional, opt-in)
+LANGCHAIN_TRACING_V2=true         # Enables tracing when set to "true"
+LANGCHAIN_API_KEY=lsv2_pt_...     # Required if tracing enabled
+LANGCHAIN_PROJECT=thaa-dev        # Optional, defaults to "default"
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com  # Optional, self-host override
 ```
+
+### Data handling (LangSmith)
+
+When `LANGCHAIN_TRACING_V2=true`, full prompts (including `goal`,
+`model_signals`, RAG context) and Claude responses are sent to LangSmith
+(api.smith.langchain.com, US region by default). Do not enable tracing for
+runs containing proprietary model data or customer PII unless your LangSmith
+workspace is approved for it. Set `LANGCHAIN_ENDPOINT` to a self-hosted
+instance if needed.
+
+Runs are tagged with `thaa`, `hil`, and `verify` or `codegen`. Each run
+carries a `thaa_run_id` UUID in metadata for correlation with backend logs.
+Node-level LLM spans (`plan_tests.llm`, `analyze_failure.llm`) are tagged
+with the node name and model ID for filtering.
 
 ## Project roadmap
 

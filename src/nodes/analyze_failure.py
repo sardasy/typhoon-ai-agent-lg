@@ -51,6 +51,13 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
         model="claude-sonnet-4-20250514",
         temperature=0,
         max_tokens=4096,
+    ).with_config(
+        tags=["analyze_failure", "claude-sonnet-4"],
+        metadata={
+            "node": "analyze_failure",
+            "scenario_id": scenario.get("scenario_id", ""),
+        },
+        run_name="analyze_failure.llm",
     )
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),

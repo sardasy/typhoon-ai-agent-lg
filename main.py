@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 
 try:
@@ -206,6 +207,8 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
 
         from src.graph import compile_graph
 
+        run_id = str(uuid.uuid4())
+
         async def stream():
             try:
                 graph_app = compile_graph()
@@ -215,8 +218,13 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
                 from langchain_core.runnables import RunnableConfig
                 run_cfg = RunnableConfig(
                     run_name=f"THAA: {goal[:60]}",
-                    tags=["thaa", "hil"],
-                    metadata={"goal": goal},
+                    tags=["thaa", "hil", "verify"],
+                    metadata={
+                        "goal": goal,
+                        "mode": "verify",
+                        "thaa_run_id": run_id,
+                        "config_path": config_path,
+                    },
                 )
 
                 async for step in graph_app.astream(initial, config=run_cfg):
@@ -299,8 +307,10 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
 
     # --- HTAF codegen endpoints -----------------------------------------------
 
+    from fastapi import UploadFile
+
     @app.post("/api/upload-tse")
-    async def upload_tse(file=File(...)):  # type: ignore[no-untyped-def]
+    async def upload_tse(file: UploadFile):
         """Accept a .tse file upload."""
         if not file.filename.endswith(".tse"):
             return JSONResponse({"error": "Only .tse files accepted"}, status_code=400)
@@ -324,6 +334,8 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
         """Run the HTAF codegen pipeline and stream events via SSE."""
         from src.graph_codegen import compile_codegen_graph
 
+        run_id = str(uuid.uuid4())
+
         async def stream():
             try:
                 graph_app = compile_codegen_graph()
@@ -332,7 +344,18 @@ def run_server(config_path: str, host: str = "0.0.0.0", port: int = 8000):
                 initial["tse_path"] = body.tse_path
                 initial["codegen_mode"] = body.mode
 
-                async for step in graph_app.astream(initial):
+                from langchain_core.runnables import RunnableConfig
+                codegen_cfg = RunnableConfig(
+                    run_name=f"THAA-codegen: {body.tse_path[:60]}",
+                    tags=["thaa", "codegen", body.mode],
+                    metadata={
+                        "tse_path": body.tse_path,
+                        "mode": body.mode,
+                        "thaa_run_id": run_id,
+                    },
+                )
+
+                async for step in graph_app.astream(initial, config=codegen_cfg):
                     for node_name, update in step.items():
                         if node_name == "__end__":
                             continue
