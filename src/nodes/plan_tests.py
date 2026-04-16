@@ -45,6 +45,10 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
         model="claude-sonnet-4-20250514",
         temperature=0,
         max_tokens=4096,
+    ).with_config(
+        tags=["plan_tests", "claude-sonnet-4"],
+        metadata={"node": "plan_tests", "goal": goal[:80]},
+        run_name="plan_tests.llm",
     )
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),

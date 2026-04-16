@@ -93,11 +93,16 @@ VALID_DIAGNOSIS = {
 
 
 def _mock_llm(content: str) -> MagicMock:
-    """Return a mocked ChatAnthropic that returns content on ainvoke."""
+    """Return a mocked ChatAnthropic that returns content on ainvoke.
+
+    `.with_config(...)` is used by production nodes to attach LangSmith tags;
+    we make it return the same mock so the stubbed `ainvoke` stays reachable.
+    """
     resp = MagicMock()
     resp.content = content
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=resp)
+    llm.with_config.return_value = llm
     return llm
 
 
