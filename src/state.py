@@ -138,6 +138,8 @@ class AgentState(TypedDict):
     model_path: str
     model_signals: list[str]
     model_loaded: bool
+    device_mode: str                                 # "typhoon" | "vhil_mock"; set by load_model, read by generate_report
+    active_preset: str                               # preset name merged by load_model ("" if none)
 
     # --- RAG context (set by load_model) ---
     rag_context: str

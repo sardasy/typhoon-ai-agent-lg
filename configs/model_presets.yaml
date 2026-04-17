@@ -1,0 +1,50 @@
+# =============================================================================
+# Model Settings Preset DB (Quick Win 5)
+# =============================================================================
+# Named HIL configurations keyed by common use case. Consumed by load_model
+# when `model.preset: "<name>"` is set in configs/model.yaml. Explicit model.*
+# values override preset values (merge: preset UNDER explicit).
+#
+# Fields (from ai_agent_automation_plan.md:760):
+#   sim_step           simulation timestep (seconds)
+#   gds_oversampling   "global" | "switch_level"
+#   device             HIL device family (HIL402/404/602+/604/606/VHIL+)
+#   config             device configuration id (device-specific)
+#   description        human-readable summary
+
+presets:
+
+  inverter_10kHz:
+    description: "General-purpose 10 kHz inverter (Si IGBT)"
+    sim_step: 1.0e-6
+    gds_oversampling: "global"
+    device: "HIL604"
+    config: 1
+
+  inverter_50kHz:
+    description: "High-frequency 50 kHz inverter (SiC/GaN)"
+    sim_step: 0.5e-6
+    gds_oversampling: "switch_level"
+    device: "HIL606"
+    config: 2
+
+  obc_clllc:
+    description: "CLLLC on-board charger with bidirectional PFC"
+    sim_step: 500.0e-9
+    gds_oversampling: "switch_level"
+    device: "HIL606"
+    config: 4
+
+  motor_drive:
+    description: "Field-oriented motor drive, 10 kHz switching"
+    sim_step: 1.0e-6
+    gds_oversampling: "global"
+    device: "HIL604"
+    config: 1
+
+  microgrid:
+    description: "Multi-inverter microgrid / ESS, low switching frequency"
+    sim_step: 2.0e-6
+    gds_oversampling: "global"
+    device: "HIL606"
+    config: 3

@@ -49,6 +49,8 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
         "model_path": "",
         "model_signals": [],
         "model_loaded": False,
+        "device_mode": "",
+        "active_preset": "",
         "rag_context": "",
         "plan_strategy": "",
         "scenarios": [],

@@ -17,6 +17,9 @@ sse-starlette>=2.0
 pyxcp>=0.22
 pya2ldb>=0.5
 
+# CAN DBC parsing (optional — regex fallback if missing)
+cantools>=39.0
+
 # RAG pipeline
 qdrant-client>=1.7
 sentence-transformers>=2.3

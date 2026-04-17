@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Any
 
+from ..fault_templates import get_template, validate_params
 from ..state import AgentState, ScenarioResult, WaveformStats, make_event
 from .load_model import get_hil
 
@@ -91,6 +92,20 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
 async def _apply_stimulus(hil, params: dict):
     """Apply test stimulus (ramp, step, fault) based on parameters."""
     import asyncio
+
+    # Preferred path: declarative fault template.
+    template_name = params.get("fault_template")
+    if template_name:
+        template = get_template(template_name)
+        if template is None:
+            raise ValueError(f"Unknown fault_template: {template_name}")
+        missing = validate_params(template, params)
+        if missing:
+            raise ValueError(
+                f"fault_template={template_name} missing params: {missing}"
+            )
+        await template.apply(hil, params)
+        return
 
     if "target_cell" in params:
         signal = f"V_cell_{params['target_cell']}"

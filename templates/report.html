@@ -58,6 +58,12 @@
 
 <h1>HIL Test Report</h1>
 <p class="subtitle">{{ plan_goal }} &mdash; {{ generated_at }}</p>
+{% if device_mode or active_preset %}
+<p class="subtitle" style="font-size: 0.85rem;">
+  {% if device_mode %}Device mode: <strong>{{ device_mode }}</strong>{% endif %}
+  {% if active_preset %}&nbsp;&middot;&nbsp;Preset: <strong>{{ active_preset }}</strong>{% endif %}
+</p>
+{% endif %}
 
 <!-- Summary cards -->
 <div class="cards">

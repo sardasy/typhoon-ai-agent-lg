@@ -94,6 +94,8 @@ def _state(**overrides):
         "model_path": "",
         "model_signals": [],
         "model_loaded": False,
+        "device_mode": "",
+        "active_preset": "",
         "rag_context": "",
         "plan_strategy": "",
         "scenarios": [],

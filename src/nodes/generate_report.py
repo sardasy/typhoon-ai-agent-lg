@@ -46,6 +46,8 @@ async def generate_report(state: AgentState) -> dict[str, Any]:
         "start_time": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "end_time": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "device_mode": state.get("device_mode", ""),
+        "active_preset": state.get("active_preset", ""),
     }
 
     report_path = r._generate_html(context, time.strftime("%Y%m%d_%H%M%S"))

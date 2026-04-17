@@ -120,6 +120,45 @@ scenarios:
       overshoot_max_percent: 10.0
       settling_time_max_ms: 50
 
+  # --- Fault Template Reference Scenarios (Quick Win 2) ---
+  # These scenarios use the declarative `fault_template` key, which resolves
+  # to src/fault_templates.py::FAULT_TEMPLATES. Params after `fault_template`
+  # are the template-specific inputs.
+  ovp_template_demo:
+    description: "Overvoltage via fault template (IEEE 1547 OVP)"
+    category: "protection"
+    standard_ref: "IEEE 1547 4.4.2"
+    parameters:
+      fault_template: "overvoltage"
+      signal: "V_cell_1"
+      nominal_value: 3.6
+      fault_value: 4.5
+      ramp_duration_s: 0.2
+      hold_after_s: 0.1
+    measurements:
+      - "V_cell_1"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 100
+
+  freq_deviation_template_demo:
+    description: "Grid frequency excursion via fault template"
+    category: "grid_support"
+    standard_ref: "IEEE 1547 6.5"
+    parameters:
+      fault_template: "frequency_deviation"
+      signal: "V_grid_L1"
+      amplitude: 311.0
+      deviated_frequency_hz: 62.5
+      hold_after_s: 0.5
+    measurements:
+      - "V_grid_L1"
+      - "Inverter_trip_flag"
+    pass_fail_rules:
+      relay_must_trip: true
+      response_time_max_ms: 160
+
   # --- Sensor Fault Tests ---
   sensor_disconnect:
     description: "Voltage sensor disconnection fault"

@@ -12,8 +12,9 @@ from typing import Any
 
 import yaml
 
+from ..presets import get_preset
 from ..state import AgentState, make_event
-from ..tools.hil_tools import HILToolExecutor
+from ..tools.hil_tools import HAS_TYPHOON, HILToolExecutor
 from ..tools.rag_tools import RAGToolExecutor
 
 
@@ -39,7 +40,39 @@ async def load_model(state: AgentState) -> dict[str, Any]:
     if p.exists():
         cfg = yaml.safe_load(p.read_text()) or {}
 
-    model_path = cfg.get("model", {}).get("path", "")
+    model_cfg = cfg.get("model", {}) or {}
+    model_path = model_cfg.get("path", "")
+
+    # Explicit device-mode detection (Quick Win 4). HAS_TYPHOON is set at
+    # import time in hil_tools based on whether the Typhoon API is available.
+    device_mode = "typhoon" if HAS_TYPHOON else "vhil_mock"
+
+    events = [
+        make_event(
+            "load_model", "observation",
+            f"Device mode: {device_mode}"
+            + ("" if HAS_TYPHOON else " (Typhoon HIL API unavailable, running on Virtual HIL)"),
+            {"device_mode": device_mode},
+        )
+    ]
+
+    # Preset merge (Quick Win 5). Explicit model.* values override preset values.
+    preset_name = model_cfg.get("preset", "") or ""
+    active_preset = ""
+    if preset_name:
+        preset = get_preset(preset_name)
+        if preset:
+            active_preset = preset_name
+            events.append(make_event(
+                "load_model", "observation",
+                f"Applied model preset: {preset_name}",
+                {"preset": preset_name, "values": preset},
+            ))
+        else:
+            events.append(make_event(
+                "load_model", "warning",
+                f"Unknown preset '{preset_name}' — ignoring",
+            ))
 
     # Load model
     hil = get_hil()
@@ -64,15 +97,17 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         r["text"] for r in rag_result.get("results", [])
     )
 
+    events.append(make_event(
+        "load_model", "observation",
+        f"Model loaded: {len(signals)} signals. RAG: {len(rag_result.get('results', []))} docs.",
+    ))
+
     return {
         "model_path": model_path,
         "model_signals": signals,
         "model_loaded": True,
+        "device_mode": device_mode,
+        "active_preset": active_preset,
         "rag_context": rag_context,
-        "events": [
-            make_event(
-                "load_model", "observation",
-                f"Model loaded: {len(signals)} signals. RAG: {len(rag_result.get('results', []))} docs.",
-            )
-        ],
+        "events": events,
     }

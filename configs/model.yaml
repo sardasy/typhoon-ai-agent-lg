@@ -6,6 +6,7 @@ model:
   path: "models/bms_pack_12s.tse"
   timestep_us: 1.0                    # simulation timestep in microseconds
   compile_on_load: true
+  # preset: "inverter_10kHz"          # optional — merge defaults from configs/model_presets.yaml
 
 hil_device:
   serial: "auto"                       # "auto" = first available device
