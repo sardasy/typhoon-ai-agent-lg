@@ -9,11 +9,28 @@ from __future__ import annotations
 
 import logging
 import textwrap
+from pathlib import Path
 from typing import Any
 
 from ..state import AgentState, make_event
+from ..tools import get_hil_api_docs, get_pytest_api
 
 logger = logging.getLogger(__name__)
+
+
+def _load_codegen_config() -> dict[str, Any]:
+    """Load configs/codegen.yaml (optional)."""
+    cfg_path = Path(__file__).resolve().parents[2] / "configs" / "codegen.yaml"
+    if not cfg_path.is_file():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        return yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -178,9 +195,18 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
     topology = parsed.get("topology", "unknown")
     sources = parsed.get("sources", {})
     first_source = next(iter(sources.keys()), "Vin") if sources else "Vin"
-    first_source_val = next(iter(sources.values()), 48.0) if sources else 48.0
     analog = parsed.get("analog_signals", [])
     out_signal = analog[0] if analog else "Vout"
+
+    # Output reference = SCADA input named "Reference" when present, otherwise
+    # fall back to the first analog source value. This is the *setpoint* the
+    # controller regulates toward, NOT the input voltage.
+    scada = parsed.get("scada_inputs", {})
+    ref_nominal = (
+        float(scada.get("Reference"))
+        if "Reference" in scada
+        else float(next(iter(sources.values()), 48.0))
+    )
 
     tests = []
 
@@ -188,9 +214,9 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
     tests.append(textwrap.dedent(f"""\
         @pytest.mark.regulation
         @pytest.mark.parametrize("desired_reference", [
-            {first_source_val * 0.8:.1f},
-            {first_source_val:.1f},
-            {first_source_val * 1.1:.1f},
+            {ref_nominal * 0.8:.1f},
+            {ref_nominal:.1f},
+            {ref_nominal * 1.1:.1f},
         ])
         def test_output_voltage_regulation(hil_setup, desired_reference):
             \"\"\"Verify output tracks reference within tolerance.\"\"\"
@@ -220,7 +246,7 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
         def test_input_disturbance_response(hil_setup, vin_dist):
             \"\"\"Verify output recovers after input voltage disturbance.\"\"\"
             nominal = SOURCES["{first_source}"]
-            hil.set_source_value("{first_source}", nominal * vin_dist)
+            hil.set_source_constant_value("{first_source}", nominal * vin_dist)
             hil.wait_msec(int(ts(200) * 1000))
 
             capture.start_capture(
@@ -232,13 +258,14 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
             cap = capture.get_capture_results()
             samples = cap["{out_signal}"]
 
+            # Regulated output should recover to the reference setpoint
             mean_v = sum(samples) / len(samples)
-            target = SOURCES["{first_source}"]  # expected output
+            target = {ref_nominal:.1f}  # regulated output reference
             assert abs(mean_v - target) / target < VOLTAGE_TOLERANCE, \\
                 f"Output {{mean_v:.3f}}V after disturbance (vin_dist={{vin_dist}})"
 
             # Restore
-            hil.set_source_value("{first_source}", nominal)
+            hil.set_source_constant_value("{first_source}", nominal)
     """))
 
     # Topology-specific tests
@@ -268,7 +295,7 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
         def test_settling_time(hil_setup):
             \"\"\"Verify settling time after step reference change.\"\"\"
             from utils.analysis import calc_settling_time
-            new_ref = {first_source_val * 1.1:.1f}
+            new_ref = {ref_nominal * 1.1:.1f}
             hil.set_scada_input_value("Reference", new_ref)
             capture.start_capture(
                 duration=0.5,
@@ -320,14 +347,29 @@ def _gen_test_file(parsed: dict, reqs: list[dict]) -> str:
 
 
 def _gen_mock_test(parsed: dict, reqs: list[dict]) -> str:
-    """Generate a single mock test file with MockHilRunner."""
+    """Generate a single mock test file with MockHilRunner.
+
+    The fixture is named ``mock_hil`` - intentionally different from the real
+    typhoon ``hil`` module so validate_code's hil.* API check doesn't
+    false-positive on method calls like ``mock_hil.capture(...)``.
+    """
     topology = parsed.get("topology", "unknown")
     sources = parsed.get("sources", {})
-    first_val = next(iter(sources.values()), 48.0) if sources else 48.0
+    scada = parsed.get("scada_inputs", {})
+    # Setpoint the controller regulates toward. Prefer SCADA "Reference",
+    # otherwise the first analog source value.
+    ref_val = (
+        float(scada.get("Reference"))
+        if "Reference" in scada
+        else float(next(iter(sources.values()), 48.0))
+    )
 
     return textwrap.dedent(f"""\
         # Auto-generated mock test for {topology} topology
-        # Runs without Typhoon HIL hardware using synthetic waveforms
+        # Runs without Typhoon HIL hardware using synthetic waveforms.
+        # Settling: second-order system with wn=2000 rad/s, zeta=0.7
+        #   -> 4*tau = 2.86 ms. A 20% skip of a 100 ms capture (=20 ms)
+        #   safely drops the transient for steady-state measurements.
         from __future__ import annotations
 
         import math
@@ -337,7 +379,7 @@ def _gen_mock_test(parsed: dict, reqs: list[dict]) -> str:
         class MockHilRunner:
             \"\"\"Generates synthetic waveform data for testing without hardware.\"\"\"
 
-            def __init__(self, target_voltage: float = {first_val}):
+            def __init__(self, target_voltage: float = {ref_val}):
                 self.target = target_voltage
                 self.running = False
 
@@ -352,15 +394,14 @@ def _gen_mock_test(parsed: dict, reqs: list[dict]) -> str:
                 import random
                 n = int(duration * rate)
                 samples = []
-                wn = 200.0  # natural frequency
-                zeta = 0.7  # damping
-                ripple_amp = self.target * 0.005  # 0.5% ripple
+                wn = 2000.0          # natural frequency, rad/s (settling ~3 ms)
+                zeta = 0.7           # damping
+                ripple_amp = self.target * 0.005   # 0.5% ripple at 100 kHz
+                wd = wn * math.sqrt(1 - zeta * zeta)
                 for i in range(n):
                     t = i / rate
-                    # Second-order step response
-                    envelope = 1.0 - math.exp(-zeta * wn * t) * math.cos(
-                        wn * math.sqrt(1 - zeta**2) * t
-                    )
+                    # Second-order step response: 1 - e^(-zwn t) * cos(wd t)
+                    envelope = 1.0 - math.exp(-zeta * wn * t) * math.cos(wd * t)
                     ripple = ripple_amp * math.sin(2 * math.pi * 100000 * t)
                     noise = random.gauss(0, self.target * 0.001)
                     samples.append(self.target * envelope + ripple + noise)
@@ -368,7 +409,7 @@ def _gen_mock_test(parsed: dict, reqs: list[dict]) -> str:
 
 
         @pytest.fixture
-        def hil():
+        def mock_hil():
             runner = MockHilRunner()
             runner.start()
             yield runner
@@ -376,18 +417,19 @@ def _gen_mock_test(parsed: dict, reqs: list[dict]) -> str:
 
 
         class TestOutputRegulation:
-            @pytest.mark.parametrize("target", [{first_val * 0.8:.1f}, {first_val:.1f}, {first_val * 1.1:.1f}])
-            def test_voltage_within_tolerance(self, hil, target):
-                hil.target = target
-                samples = hil.capture(duration=0.5, rate=50000)
-                # Skip transient (first 20%)
+            @pytest.mark.parametrize("target", [{ref_val * 0.8:.1f}, {ref_val:.1f}, {ref_val * 1.1:.1f}])
+            def test_voltage_within_tolerance(self, mock_hil, target):
+                mock_hil.target = target
+                samples = mock_hil.capture(duration=0.5, rate=50000)
+                # Skip transient (first 20% = 100 ms at 500 ms total)
                 steady = samples[len(samples) // 5:]
                 mean_v = sum(steady) / len(steady)
                 assert abs(mean_v - target) / target < 0.05, \\
                     f"Output {{mean_v:.3f}}V vs target {{target}}V"
 
-            def test_ripple_below_threshold(self, hil):
-                samples = hil.capture(duration=0.1, rate=100000)
+            def test_ripple_below_threshold(self, mock_hil):
+                samples = mock_hil.capture(duration=0.1, rate=100000)
+                # Skip transient (first 20% = 20 ms; 4*tau settling ~3 ms)
                 steady = samples[len(samples) // 5:]
                 mean_v = sum(steady) / len(steady)
                 pk_pk = max(steady) - min(steady)
@@ -415,17 +457,43 @@ async def generate_tests(state: AgentState) -> dict[str, Any]:
     topology = parsed.get("topology", "unknown")
     files: dict[str, str] = {}
 
+    # Load HIL API docs (hil_api.html) and pytest introspection index.
+    # Both failures are non-fatal: we still emit tests without their headers.
+    codegen_cfg = _load_codegen_config()
+    doc_cfg = codegen_cfg.get("hil_api_docs", {}) or {}
+    pyt_cfg = codegen_cfg.get("pytest_api", {}) or {}
+
+    api_docs = get_hil_api_docs(doc_cfg.get("path"))
+    api_count = api_docs.count() if api_docs.is_loaded() else 0
+    api_header = ""
+    if api_docs.is_loaded():
+        max_items = int(doc_cfg.get("context_header_max_items", 30))
+        api_header = api_docs.summary_for_context(max_items=max_items) + "\n"
+
+    pytest_api = get_pytest_api()
+    pytest_symbols = len(pytest_api.list_public_api()) if pytest_api.is_loaded() else 0
+    pytest_header = ""
+    if pytest_api.is_loaded():
+        pytest_max = int(pyt_cfg.get("context_header_max_items", 20))
+        pytest_header = pytest_api.summary_for_context(max_items=pytest_max) + "\n"
+
+    combined_header = api_header + pytest_header
+
     if mode == "typhoon":
         files["constants.py"] = _gen_constants(parsed, reqs)
         files["conftest.py"] = _gen_conftest(parsed)
         files["pytest.ini"] = _gen_pytest_ini()
-        files[f"test_{topology}.py"] = _gen_test_file(parsed, reqs)
+        files[f"test_{topology}.py"] = combined_header + _gen_test_file(parsed, reqs)
         files["utils/__init__.py"] = ""
         files["utils/analysis.py"] = _gen_analysis_utils()
     else:
-        files[f"test_mock_{topology}.py"] = _gen_mock_test(parsed, reqs)
+        files[f"test_mock_{topology}.py"] = combined_header + _gen_mock_test(parsed, reqs)
 
     msg = f"Generated {len(files)} files ({mode} mode, topology={topology})"
+    if api_count:
+        msg += f"; {api_count} HIL API members loaded"
+    if pytest_symbols:
+        msg += f"; pytest v{pytest_api.version()} introspected ({pytest_symbols} symbols)"
     logger.info(msg)
 
     return {
@@ -434,5 +502,9 @@ async def generate_tests(state: AgentState) -> dict[str, Any]:
             "file_count": len(files),
             "mode": mode,
             "filenames": list(files.keys()),
+            "hil_api_members": api_count,
+            "hil_api_doc_path": api_docs._loaded_path or "",
+            "pytest_version": pytest_api.version() if pytest_api.is_loaded() else "",
+            "pytest_public_symbols": pytest_symbols,
         })],
     }
