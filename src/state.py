@@ -44,6 +44,9 @@ class WaveformStats(BaseModel):
     overshoot_percent: float | None = None
     rise_time_ms: float | None = None
     settling_time_ms: float | None = None
+    # Additional metrics computed on demand (see src/tools/hil_tools.py::_capture)
+    thd_percent: float | None = None
+    rocof_hz_per_s: float | None = None
 
 
 class ScenarioResult(BaseModel):

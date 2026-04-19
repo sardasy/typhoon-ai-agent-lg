@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Any
 
+from ..evaluator import evaluate as evaluate_rules
 from ..fault_templates import get_template, validate_params
 from ..state import AgentState, ScenarioResult, WaveformStats, make_event
 from .load_model import get_hil
@@ -72,7 +73,9 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
             if measurements and not stats:
                 status, fail_reason = "error", "capture returned no statistics"
             else:
-                status, fail_reason = _evaluate(rules, stats)
+                status, fail_reason = evaluate_rules(
+                    rules, stats, scenario=scenario, strict=True,
+                )
 
     except Exception as e:
         logger.exception(f"Scenario {sid} error")
@@ -167,41 +170,6 @@ async def _apply_stimulus(hil, params: dict):
         await asyncio.sleep(0.5)
 
 
-def _evaluate(
-    rules: dict, stats: list[WaveformStats]
-) -> tuple[str, str]:
-    """Evaluate pass/fail rules. Returns (status, fail_reason)."""
-    stats_map = {s.signal: s for s in stats}
-
-    for key, val in rules.items():
-        if key == "relay_must_trip":
-            for name, s in stats_map.items():
-                if "relay" in name.lower() and s.max < 0.5:
-                    return "fail", "Protection relay did not trip"
-
-        elif key == "relay_must_not_trip":
-            for name, s in stats_map.items():
-                if "relay" in name.lower() and s.max > 0.5:
-                    return "fail", "Relay tripped at boundary (should not)"
-
-        elif key == "response_time_max_ms":
-            for name, s in stats_map.items():
-                if "relay" in name.lower() and s.rise_time_ms is not None:
-                    if s.rise_time_ms > val:
-                        return "fail", f"Response time {s.rise_time_ms:.1f}ms > {val}ms limit"
-
-        elif key == "overshoot_max_percent":
-            for s in stats:
-                if s.overshoot_percent is not None and s.overshoot_percent > val:
-                    return "fail", f"{s.signal} overshoot {s.overshoot_percent:.1f}% > {val}%"
-
-        elif key == "steady_state_error_max_percent":
-            for s in stats:
-                if "out" in s.signal.lower():
-                    ref = rules.get("output_voltage_ref", s.mean) or s.mean
-                    if ref > 0:
-                        err = abs(s.mean - ref) / ref * 100
-                        if err > val:
-                            return "fail", f"SS error {err:.2f}% > {val}%"
-
-    return "pass", ""
+# Legacy _evaluate() removed -- rule dispatch lives in src/evaluator.py.
+# The 4 originally-hardcoded rules are now registered handlers there,
+# joined by ~60 additional rules that previously passed silently.
