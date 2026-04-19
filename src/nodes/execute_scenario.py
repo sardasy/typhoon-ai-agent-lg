@@ -52,7 +52,9 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
         cap_kwargs = {
             "signals": measurements,
             "duration_s": duration,
-            "analysis": ["mean", "max", "min", "rms", "overshoot", "rise_time"],
+            "analysis": ["mean", "max", "min", "rms",
+                         "overshoot", "rise_time", "settling_time",
+                         "thd", "rocof"],
         }
         # Pass through optional capture-tuning params from the scenario
         for k in ("heal_target_param", "heal_target_threshold",

@@ -343,20 +343,14 @@ class HILToolExecutor:
             results = self._capture_typhoon(signals, duration, sample_rate, params)
             if isinstance(results, dict) and "error" in results:
                 return results
-            stats = []
-            for sig in signals:
-                data = results.get(sig, []) if results else []
-                s = {"signal": sig}
-                if data:
-                    if "mean" in analysis:
-                        s["mean"] = float(sum(data) / len(data))
-                    if "max" in analysis:
-                        s["max"] = float(max(data))
-                    if "min" in analysis:
-                        s["min"] = float(min(data))
-                    if "rms" in analysis:
-                        s["rms"] = float((sum(x*x for x in data) / len(data)) ** 0.5)
-                stats.append(s)
+            # Effective rate may be lower than requested when we fell back
+            # to polling. Infer from actual sample count.
+            effective_rate = sample_rate
+            if results:
+                first = next(iter(results.values()))
+                if first and duration > 0:
+                    effective_rate = max(1.0, len(first) / duration)
+            stats = self._compute_stats(signals, results, analysis, effective_rate, params)
         else:
             # Mock data with optional self-healing simulation:
             # When the scenario sets  and the XCP executor
@@ -446,6 +440,53 @@ class HILToolExecutor:
         for sig, n in failures.items():
             logger.warning("polled read of '%s' failed %d times", sig, n)
         return out
+
+    def _compute_stats(self, signals, results, analysis, sample_rate, params):
+        """Compute WaveformStats-shaped dicts from captured arrays.
+
+        Populates derived metrics (thd_percent, rocof_hz_per_s,
+        rise_time_ms, settling_time_ms, overshoot_percent) when the
+        analysis list asks for them AND the captured data supports it.
+        Missing derived fields stay None so the evaluator can return
+        ERROR instead of silently passing.
+        """
+        from .. import waveform_analytics as wa
+
+        # Scenario hints for FFT / step-response targets
+        fundamental_hz = params.get("fundamental_hz", 50.0)
+
+        stats = []
+        for sig in signals:
+            data = results.get(sig, []) if results else []
+            s: dict = {"signal": sig}
+            if not data:
+                stats.append(s)
+                continue
+
+            if "mean" in analysis:
+                s["mean"] = wa.mean(data)
+            if "max" in analysis:
+                s["max"] = float(max(data))
+            if "min" in analysis:
+                s["min"] = float(min(data))
+            if "rms" in analysis:
+                s["rms"] = wa.rms(data)
+
+            if "rise_time" in analysis:
+                s["rise_time_ms"] = wa.rise_time_ms(data, sample_rate)
+            if "settling_time" in analysis or "settling" in analysis:
+                s["settling_time_ms"] = wa.settling_time_ms(data, sample_rate)
+            if "overshoot" in analysis:
+                s["overshoot_percent"] = wa.overshoot_percent(data)
+            if "thd" in analysis:
+                s["thd_percent"] = wa.thd_percent(data, sample_rate, fundamental_hz)
+            if "rocof" in analysis:
+                # Treat 'w' / 'omega' signals as angular freq; else as Hz
+                is_omega = sig.lower() in ("w", "omega", "w_phi")
+                s["rocof_hz_per_s"] = wa.rocof_hz_per_s(data, sample_rate, is_omega=is_omega)
+
+            stats.append(s)
+        return stats
 
     async def _fault_inject(self, params: dict) -> dict:
         fault_type = params["fault_type"]
