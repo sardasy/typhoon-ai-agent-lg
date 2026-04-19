@@ -26,7 +26,7 @@ All source files, configs, and prompts are structured for AI-assisted developmen
 - `prompts/*.md` contain agent system prompts (editable independently from code)
 - `configs/*.yaml` define test scenarios and hardware config (no code changes needed)
 - Mock mode allows full development without physical HIL hardware
-- All 44 tests pass without any external dependencies (no API key, no HIL, no XCP)
+- All 111 tests pass without any external dependencies (no API key, no HIL, no XCP)
 
 ## Architecture summary
 
@@ -48,7 +48,7 @@ The graph has 3 conditional edges: `route_after_exec`, `route_after_analysis`,
 ## Commands
 
 ```bash
-# Run tests (44 tests, should all pass — run this after every change)
+# Run tests (111 tests, should all pass — run this after every change)
 cd typhoon_ai_agent_lg && python -m pytest tests/ -v
 
 # Run a single test goal (requires ANTHROPIC_API_KEY)
@@ -68,7 +68,7 @@ When working on this project with Claude Code, follow this sequence:
 1. **Read before writing.** Always read the relevant node file and `state.py`
    before modifying any node. Understand what state fields the node reads/writes.
 2. **Run tests after every change.** `python -m pytest tests/ -v` must stay at
-   44 passed (or more if you added tests). Never commit with failing tests.
+   111 passed (or more if you added tests). Never commit with failing tests.
 3. **Add a routing test for every new conditional edge.** If you add a new branch
    in `route_after_exec`, add a test case for it in `TestRouteAfterExec`.
 4. **Mock mode first.** Develop and test with `HAS_TYPHOON=False`. Only test on
@@ -129,6 +129,35 @@ When working on this project with Claude Code, follow this sequence:
 4. **Voltage/current limits are hard caps.** `SafetyConfig.max_voltage` and
    `max_current` are enforced by the Validator before every tool call. These
    represent physical equipment limits, not software preferences.
+
+### Fault template library (src/fault_templates.py)
+10 stimulus templates available, dispatched by `parameters.fault_template`:
+
+| Template | Use case | Standards |
+|----------|----------|-----------|
+| `overvoltage` / `undervoltage` | Cell or AC OVP/UVP ramp | IEC 62619, IEEE 1547 |
+| `voltage_sag` / `voltage_swell` | LVRT / HVRT (3-phase) | IEEE 1547 §6.4 |
+| `frequency_deviation` | OF/UF trip + freq excursion | IEEE 1547 §6.5 |
+| `short_circuit` / `open_circuit` | Switch fault injection | IEC 62619 |
+| `vsm_steady_state` | VSM Pref/Qref/J/D/Kv driver | IEEE 2800 §9 |
+| `vsm_pref_step` | Inertia response (J sweep) | IEEE 2800 §7.2.2 |
+| `phase_jump` | Phase angle step (≤25°) | IEEE 2800 §7.3 |
+
+All templates support 3-phase via `signal_ac_sources: ["Vsa","Vsb","Vsc"]`.
+IEEE 1547/2800 bounds are enforced inside each template (raises ValueError).
+
+### Standards coverage (current)
+Predefined scenario libraries by domain:
+
+| YAML file | Topology | Scenarios | Standards |
+|-----------|----------|-----------|-----------|
+| `configs/scenarios.yaml` | BMS 12S pack | 10 | IEC 62619, IEEE 1547 |
+| `configs/scenarios_250123.yaml` | ESS/EV charger | 32 | IEEE 1547, IEC 62619/61851, UL 9540 |
+| `configs/scenarios_vsm_gfm.yaml` | VSM GFM inverter | 23 | IEEE 2800-2022 (6 sections) |
+
+Predefined scenarios in YAML are loaded directly (no Claude Planner call) by
+`plan_tests.py::_load_predefined_scenarios()`. Falls back to Claude when the
+config has no `scenarios:` section.
 
 ### Typhoon HIL API rules
 - `typhoon.api.hil` is local-only and single-threaded. Never call from multiple

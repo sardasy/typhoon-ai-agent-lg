@@ -24,13 +24,18 @@ def _mock_hil() -> AsyncMock:
 
 
 class TestRegistry:
-    def test_five_templates_registered(self):
+    def test_all_templates_registered(self):
         expected = {
             "overvoltage",
             "undervoltage",
             "short_circuit",
             "open_circuit",
             "frequency_deviation",
+            "voltage_sag",
+            "voltage_swell",
+            "vsm_steady_state",
+            "vsm_pref_step",
+            "phase_jump",
         }
         assert expected == set(FAULT_TEMPLATES.keys())
 
@@ -38,9 +43,9 @@ class TestRegistry:
         assert get_template("nonexistent") is None
 
     def test_validate_params_missing(self):
-        t = FAULT_TEMPLATES["overvoltage"]
-        assert "signal" in validate_params(t, {"fault_value": 5.0})
-        assert validate_params(t, {"signal": "V", "fault_value": 5.0}) == []
+        t = FAULT_TEMPLATES["short_circuit"]
+        assert "switch_name" in validate_params(t, {})
+        assert validate_params(t, {"switch_name": "S1"}) == []
 
 
 class TestOvervoltageTemplate:
@@ -135,7 +140,7 @@ class TestStimulusDispatch:
 
     async def test_missing_required_params_raises(self):
         hil = _mock_hil()
-        with pytest.raises(ValueError, match="missing params"):
+        with pytest.raises(ValueError, match="requires"):
             await _apply_stimulus(hil, {"fault_template": "overvoltage"})
 
     async def test_legacy_fallback_still_works(self):

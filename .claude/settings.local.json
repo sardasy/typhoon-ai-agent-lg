@@ -9,7 +9,16 @@
       "Bash(curl -s -X POST http://localhost:8001/api/run -H 'Content-Type: application/json' -d '{\"goal\":\"BMS overvoltage test\"}')",
       "Bash(curl -s -X POST http://localhost:8001/api/run -H 'Content-Type: application/json' -d '{\"goal\":\"BMS overvoltage protection at 4.2V with 100ms response\"}' --max-time 30)",
       "Bash(kill %1)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "mcp__plugin_typhoon-hil-rag-pipeline_chromadb__chroma_list_collections",
+      "Read(//c/abc/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(ls -d \"C:/abc/\"*/)",
+      "Bash(where typhoon:*)",
+      "Bash(pip show:*)",
+      "WebSearch",
+      "WebFetch(domain:www.typhoon-hil.com)",
+      "Bash(npx -y -p @mermaid-js/mermaid-cli mmdc --version)"
     ]
   }
 }

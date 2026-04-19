@@ -28,6 +28,8 @@ class SafetyConfig:
         "BMS_scanInterval_ch9", "BMS_scanInterval_ch10",
         "BMS_scanInterval_ch11", "BMS_scanInterval_ch12",
         "Ctrl_Kp", "Ctrl_Ki", "Ctrl_Kd",
+        # VSM (IEEE 2800 GFM) tuning -- safe to retune via heal loop
+        "J", "D", "Kv",
     })
 
 

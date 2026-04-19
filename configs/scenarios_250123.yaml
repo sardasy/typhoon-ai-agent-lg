@@ -1,0 +1,722 @@
+# =============================================================================
+# Test Scenario Library — 250123_Test.tse
+# =============================================================================
+# ESS/EV Charger: 3-phase AC-DC PFC + Dual CLLLC DC-DC + Li-Ion Battery
+# HIL Device: HIL606 | Grid: 3ph 230Vrms/50Hz | Battery: 490V/40Ah
+#
+# Applicable Standards:
+#   - IEEE 1547-2018 / 1547.1-2020 (DER Interconnection)
+#   - IEC 62619 (Secondary lithium cells — Safety)
+#   - IEC 61851 (EV conductive charging)
+#   - UL 9540 (Energy Storage Systems)
+#   - IEC 61000-3-2 (Harmonic current emissions)
+# =============================================================================
+
+model:
+  path: "models/250123_Test.tse"
+  device: "HIL606"
+  timestep_us: 0.5
+  grid_voltage_rms: 230
+  grid_frequency_hz: 50
+  battery_voltage_nom: 490
+  dc_link_voltage_nom: 400
+  switching_freq_pfc_hz: 10000
+  switching_freq_clllc_hz: 200000
+  ieee_1547_category: "II"
+
+scenarios:
+
+  # =========================================================================
+  # 1. IEEE 1547 — Abnormal Voltage Response (Section 4.4.2)
+  # =========================================================================
+
+  ieee1547_ov2_trip:
+    description: "Overvoltage Level 2 trip (V >= 1.20 pu)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 16 (OV2)"
+    parameters:
+      fault_template: "overvoltage"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27        # 230 * sqrt(2)
+      fault_voltage_pu: 1.22              # slightly above 1.20 threshold
+      ramp_duration_s: 0.01
+      hold_after_s: 0.5
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.16
+      voltage_threshold_pu: 1.20
+      tolerance_pu: 0.02
+
+  ieee1547_ov1_trip:
+    description: "Overvoltage Level 1 trip (1.10 <= V < 1.20 pu)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 16 (OV1, Cat II)"
+    parameters:
+      fault_template: "overvoltage"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      fault_voltage_pu: 1.15
+      ramp_duration_s: 0.05
+      hold_after_s: 15.0
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 13.0           # Cat II: 13.0s
+      voltage_threshold_pu: 1.10
+      tolerance_pu: 0.02
+
+  ieee1547_uv1_trip:
+    description: "Undervoltage Level 1 trip (0.70 <= V < 0.88 pu)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 16 (UV1, Cat II)"
+    parameters:
+      fault_template: "undervoltage"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      fault_voltage_pu: 0.80
+      ramp_duration_s: 0.05
+      hold_after_s: 25.0
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 21.0           # Cat II: 21.0s
+      voltage_threshold_pu: 0.88
+      tolerance_pu: 0.02
+
+  ieee1547_uv2_trip:
+    description: "Undervoltage Level 2 trip (0.50 <= V < 0.70 pu)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 16 (UV2, Cat II)"
+    parameters:
+      fault_template: "undervoltage"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      fault_voltage_pu: 0.60
+      ramp_duration_s: 0.01
+      hold_after_s: 12.0
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 10.0           # Cat II: 10.0s
+      voltage_threshold_pu: 0.70
+      tolerance_pu: 0.02
+
+  ieee1547_uv3_trip:
+    description: "Undervoltage Level 3 trip (V < 0.50 pu)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 16 (UV3)"
+    parameters:
+      fault_template: "undervoltage"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      fault_voltage_pu: 0.40
+      ramp_duration_s: 0.005
+      hold_after_s: 0.5
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.16
+      voltage_threshold_pu: 0.50
+      tolerance_pu: 0.02
+
+  # =========================================================================
+  # 2. IEEE 1547 — Abnormal Frequency Response (Section 6.5)
+  # =========================================================================
+
+  ieee1547_of2_trip:
+    description: "Over-frequency Level 2 trip (f >= 62.0 Hz)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 19 (OF2)"
+    parameters:
+      fault_template: "frequency_deviation"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      amplitude_peak: 325.27
+      nominal_frequency_hz: 50.0
+      deviated_frequency_hz: 52.1         # 62.0/60*50 = 51.67, use 52.1 for margin
+      ramp_duration_s: 0.1
+      hold_after_s: 0.5
+    measurements:
+      - "VACGRID_L1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.16
+      frequency_threshold_hz: 51.67       # 62.0 Hz scaled to 50Hz base
+
+  ieee1547_of1_trip:
+    description: "Over-frequency Level 1 trip (f >= 61.8 Hz)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 19 (OF1)"
+    parameters:
+      fault_template: "frequency_deviation"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      amplitude_peak: 325.27
+      nominal_frequency_hz: 50.0
+      deviated_frequency_hz: 51.5         # 61.8/60*50 = 51.5
+      ramp_duration_s: 0.1
+      hold_after_s: 320.0
+    measurements:
+      - "VACGRID_L1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 300.0
+      frequency_threshold_hz: 51.5
+
+  ieee1547_uf1_trip:
+    description: "Under-frequency Level 1 trip (f <= 58.5 Hz)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 19 (UF1)"
+    parameters:
+      fault_template: "frequency_deviation"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      amplitude_peak: 325.27
+      nominal_frequency_hz: 50.0
+      deviated_frequency_hz: 48.75        # 58.5/60*50 = 48.75
+      ramp_duration_s: 0.1
+      hold_after_s: 320.0
+    measurements:
+      - "VACGRID_L1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 300.0
+      frequency_threshold_hz: 48.75
+
+  ieee1547_uf2_trip:
+    description: "Under-frequency Level 2 trip (f <= 56.5 Hz)"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 19 (UF2)"
+    parameters:
+      fault_template: "frequency_deviation"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      amplitude_peak: 325.27
+      nominal_frequency_hz: 50.0
+      deviated_frequency_hz: 47.08        # 56.5/60*50 = 47.08
+      ramp_duration_s: 0.1
+      hold_after_s: 0.5
+    measurements:
+      - "VACGRID_L1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.16
+      frequency_threshold_hz: 47.08
+
+  # =========================================================================
+  # 3. IEEE 1547 — Voltage Ride-Through (Section 6.4)
+  # =========================================================================
+
+  ieee1547_lvrt_cat2_deep:
+    description: "LVRT deep sag (0.50 pu) — momentary cessation allowed"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 22 (Cat II LVRT)"
+    parameters:
+      fault_template: "voltage_sag"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      sag_voltage_pu: 0.50
+      pre_fault_duration_s: 1.0
+      fault_duration_s: 0.15              # just within 0.16s limit
+      post_fault_duration_s: 2.0
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+      - "VLINK_1"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      must_not_trip: true                 # momentary cessation OK but no trip
+      dc_link_voltage_max_pu: 1.15        # VLINK must not exceed 115%
+      power_recovery_time_s: 0.4          # active power to 80% within 0.4s
+      power_recovery_threshold_pct: 80
+
+  ieee1547_lvrt_cat2_moderate:
+    description: "LVRT moderate sag (0.70 pu) — mandatory operation"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 22 (Cat II LVRT)"
+    parameters:
+      fault_template: "voltage_sag"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      sag_voltage_pu: 0.70
+      pre_fault_duration_s: 1.0
+      fault_duration_s: 9.0               # within 10.0s Cat II limit
+      post_fault_duration_s: 2.0
+    measurements:
+      - "VACGRID_L1_"
+      - "IAC_A1_"
+      - "VLINK_1"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      must_stay_connected: true           # mandatory operation
+      current_must_flow: true             # current injection maintained
+      dc_link_voltage_max_pu: 1.15
+      power_recovery_time_s: 0.4
+      power_recovery_threshold_pct: 80
+
+  ieee1547_hvrt_cat2:
+    description: "HVRT (1.15 pu) — mandatory operation for 12s"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Table 23 (Cat II HVRT)"
+    parameters:
+      fault_template: "voltage_swell"
+      signal_ac_sources: ["Vsa", "Vsb", "Vsc"]
+      nominal_voltage_peak: 325.27
+      swell_voltage_pu: 1.15
+      pre_fault_duration_s: 1.0
+      fault_duration_s: 11.0              # within 12.0s limit
+      post_fault_duration_s: 2.0
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "IAC_A1_"
+      - "VLINK_1"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      must_stay_connected: true
+      dc_link_voltage_max_pu: 1.20
+      current_thd_max_pct: 10.0
+
+  # =========================================================================
+  # 4. IEEE 1547 — Power Quality (Section 7.4)
+  # =========================================================================
+
+  ieee1547_thd_steady_state:
+    description: "Current THD at rated power (TRD <= 5%)"
+    category: "power_quality"
+    standard_ref: "IEEE 1547-2018 Section 7.4"
+    parameters:
+      operating_mode: "rated_power"
+      measurement_window_cycles: 10
+      fft_window: "hanning"
+    measurements:
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+    pass_fail_rules:
+      current_trd_max_pct: 5.0
+      voltage_thd_max_pct: 5.0
+      individual_harmonic_limits:
+        odd_3_9_pct: 4.0
+        odd_11_15_pct: 2.0
+        odd_17_21_pct: 1.5
+        odd_23_33_pct: 0.6
+      dc_injection_max_pct: 0.5
+
+  ieee1547_thd_partial_load:
+    description: "Current THD at 25% load"
+    category: "power_quality"
+    standard_ref: "IEEE 1547-2018 Section 7.4"
+    parameters:
+      operating_mode: "partial_load"
+      load_percent: 25
+      measurement_window_cycles: 10
+    measurements:
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+    pass_fail_rules:
+      current_trd_max_pct: 5.0
+      voltage_thd_max_pct: 5.0
+
+  # =========================================================================
+  # 5. IEEE 1547 — Anti-Islanding (Section 8.2)
+  # =========================================================================
+
+  ieee1547_anti_islanding:
+    description: "Unintentional islanding detection within 2.0s"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Section 8.2 / 1547.1 Section 8.10"
+    parameters:
+      pre_island_duration_s: 2.0
+      p_mismatch_pct: 0
+      q_mismatch_pct: 0
+      island_duration_s: 3.0              # observe for 3s (must detect < 2s)
+      breaker_signal: "Breaker 1"
+    measurements:
+      - "VACGRID_L1_"
+      - "VACGRID_L2_"
+      - "VACGRID_L3_"
+      - "IAC_A1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      island_detection_max_s: 2.0
+      lockout_must_trip: true
+
+  ieee1547_anti_islanding_5pct:
+    description: "Anti-islanding with 5% power mismatch"
+    category: "grid_compliance"
+    standard_ref: "IEEE 1547-2018 Section 8.2 / 1547.1 Section 8.10"
+    parameters:
+      pre_island_duration_s: 2.0
+      p_mismatch_pct: 5
+      q_mismatch_pct: 5
+      island_duration_s: 3.0
+      breaker_signal: "Breaker 1"
+    measurements:
+      - "VACGRID_L1_"
+      - "IAC_A1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      island_detection_max_s: 2.0
+      lockout_must_trip: true
+
+  # =========================================================================
+  # 6. ESS Protection — DC Link / Battery (IEC 62619 + UL 9540)
+  # =========================================================================
+
+  ess_dc_link_overvoltage:
+    description: "DC link overvoltage protection — IGBT gate block"
+    category: "protection"
+    standard_ref: "UL 9540 Section 40 / IEC 62619 7.2.1"
+    parameters:
+      signal: "VLINK_1"
+      nominal_voltage: 400
+      fault_voltage: 480                  # 120% of nominal
+      ramp_duration_s: 0.01
+      scada_input: "OVR_VLINK1"
+    measurements:
+      - "VLINK_1"
+      - "VLINK_2"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.05           # fast protection required
+      voltage_threshold: 460              # 115% trigger
+
+  ess_dc_link_undervoltage:
+    description: "DC link undervoltage protection"
+    category: "protection"
+    standard_ref: "UL 9540 Section 40"
+    parameters:
+      signal: "VLINK_1"
+      nominal_voltage: 400
+      fault_voltage: 280                  # 70% of nominal
+      ramp_duration_s: 0.1
+      scada_input: "OVR_VLINK1"
+    measurements:
+      - "VLINK_1"
+      - "VDC"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 1.0
+
+  ess_battery_overvoltage:
+    description: "Battery terminal overvoltage protection"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.1"
+    parameters:
+      signal: "VDC"
+      nominal_voltage: 490
+      fault_voltage: 560                  # ~114% of nominal
+      ramp_duration_s: 0.05
+    measurements:
+      - "VDC"
+      - "IDC_1"
+      - "IDC_2"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.1
+      charging_current_must_stop: true
+
+  # =========================================================================
+  # 7. ESS Protection — AC Overcurrent (IEC 62619 + IEEE 1547)
+  # =========================================================================
+
+  ess_ocp_phase_a:
+    description: "Phase A overcurrent protection (PFC1)"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.2 / IEEE 1547-2018 Section 7.3"
+    parameters:
+      target_phase: "A"
+      scada_input: "OVR_IAC_A1"
+      nominal_current_rms: 14.35          # 3300W / (230V * 1.0)
+      fault_current_pu: 1.5               # 150% of nominal
+      ramp_duration_s: 0.005
+    measurements:
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.05
+      other_phases_must_disconnect: true
+
+  ess_ocp_dc_link:
+    description: "DC link overcurrent protection"
+    category: "protection"
+    standard_ref: "IEC 62619 7.2.2"
+    parameters:
+      scada_input: "OVR_IDC1"
+      nominal_current: 8.25              # 3300W / 400V
+      fault_current_pu: 2.0
+      ramp_duration_s: 0.001
+    measurements:
+      - "IDC_1"
+      - "IDC_2"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.01           # DC OCP must be very fast
+
+  # =========================================================================
+  # 8. ESS Protection — Residual Current / Ground Fault
+  # =========================================================================
+
+  ess_rcd_trip:
+    description: "Residual current device 5mA trip"
+    category: "protection"
+    standard_ref: "IEC 62955 / IEC 61851-1 Section 6.3.3"
+    parameters:
+      scada_input: "M-RCD_5_TRIP"
+      trip_current_ma: 5
+    measurements:
+      - "VACGRID_L1_"
+      - "IAC_A1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 0.04           # Type A RCD: 40ms max
+      all_contactors_must_open: true
+
+  # =========================================================================
+  # 9. ESS Protection — Thermal (UL 9540)
+  # =========================================================================
+
+  ess_thermal_pfc1_overtemp:
+    description: "PFC1 module over-temperature shutdown"
+    category: "protection"
+    standard_ref: "UL 9540 Section 38"
+    parameters:
+      scada_inputs:
+        - "PFC1_TEMP1"
+        - "PFC1_TEMP2"
+      overtemp_threshold_c: 125           # IGBT junction max
+      ramp_rate_c_per_s: 10
+    measurements:
+      - "VLINK_1"
+      - "IAC_A1_"
+      - "LOCK_OUT_AC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 1.0
+      controlled_shutdown: true           # gradual power reduction preferred
+
+  ess_thermal_dcdc1_overtemp:
+    description: "DCDC1 module over-temperature shutdown"
+    category: "protection"
+    standard_ref: "UL 9540 Section 38"
+    parameters:
+      scada_inputs:
+        - "DCDC1_TEMP1"
+        - "DCDC1_TEMP2"
+      overtemp_threshold_c: 125
+      ramp_rate_c_per_s: 10
+    measurements:
+      - "VLINK_2"
+      - "IDC_1"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      lockout_must_trip: true
+      clearing_time_max_s: 1.0
+
+  ess_thermal_heatsink_overtemp:
+    description: "Heatsink over-temperature — full system shutdown"
+    category: "protection"
+    standard_ref: "UL 9540 Section 38"
+    parameters:
+      scada_input: "HEAT_SINK"
+      overtemp_threshold_c: 85            # heatsink limit lower than junction
+      ramp_rate_c_per_s: 5
+    measurements:
+      - "IAC_A1_"
+      - "IDC_1"
+      - "LOCK_OUT_AC"
+      - "LOCK_OUT_DC"
+    pass_fail_rules:
+      both_lockouts_must_trip: true       # AC + DC both must lock out
+      clearing_time_max_s: 2.0
+
+  # =========================================================================
+  # 10. ESS Control — Contactor Sequencing (IEC 61851)
+  # =========================================================================
+
+  ess_precharge_sequence:
+    description: "AC precharge relay sequencing and DC link soft-start"
+    category: "control_performance"
+    standard_ref: "IEC 61851-1 Section 11.4"
+    parameters:
+      contactor_sequence:
+        - signal: "AC_RLY_PRECHG"
+          action: "close"
+          delay_s: 0
+        - signal: "AC_RLY_L1"
+          action: "close"
+          delay_s: 0.5
+        - signal: "AC_RLY_L2"
+          action: "close"
+          delay_s: 0.5
+        - signal: "AC_RLY_L3"
+          action: "close"
+          delay_s: 0.5
+        - signal: "AC_RLY_PRECHG"
+          action: "open"
+          delay_s: 1.0
+    measurements:
+      - "VLINK_1"
+      - "VACGRID_L1_"
+      - "IAC_A1_"
+    pass_fail_rules:
+      dc_link_overshoot_max_pct: 10       # soft-start: no voltage overshoot
+      inrush_current_max_pu: 2.0          # precharge limits inrush
+      sequence_timing_tolerance_ms: 50
+
+  ess_contactor_welding_detect:
+    description: "Contactor welding detection on AC relays"
+    category: "protection"
+    standard_ref: "IEC 61851-1 Section 11.6"
+    parameters:
+      target_contactors: ["AC_RLY_L1", "AC_RLY_L2", "AC_RLY_L3"]
+      test_method: "voltage_check_before_close"
+    measurements:
+      - "VAC_L1_L3N_"
+      - "VAC_L2_L3N_"
+      - "VACGRID_L1_"
+    pass_fail_rules:
+      welding_detected_must_block_start: true
+      voltage_presence_before_close: true
+
+  # =========================================================================
+  # 11. ESS Control — Lock-In / Lock-Out Logic
+  # =========================================================================
+
+  ess_ac_lockout_activation:
+    description: "AC lock-out signal activation and contactor response"
+    category: "protection"
+    standard_ref: "UL 9540 Section 42"
+    parameters:
+      scada_input: "OVR_Lock_out_AC"
+      trigger_value: 1.0
+    measurements:
+      - "LOCK_OUT_AC"
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+      - "VACGRID_L1_"
+    pass_fail_rules:
+      all_ac_contactors_must_open: true
+      igbt_gate_must_block: true
+      clearing_time_max_s: 0.02
+
+  ess_dc_lockout_activation:
+    description: "DC lock-out signal activation and converter shutdown"
+    category: "protection"
+    standard_ref: "UL 9540 Section 42"
+    parameters:
+      scada_input: "OVR_Lock_out_DC"
+      trigger_value: 1.0
+    measurements:
+      - "LOCK_OUT_DC"
+      - "IDC_1"
+      - "IDC_2"
+      - "VLINK_2"
+    pass_fail_rules:
+      dc_converter_must_stop: true
+      battery_current_must_zero: true
+      clearing_time_max_s: 0.02
+
+  # =========================================================================
+  # 12. SMPS Fault (Auxiliary Power Supply)
+  # =========================================================================
+
+  ess_smps_fault:
+    description: "SMPS auxiliary power fault — safe shutdown"
+    category: "protection"
+    standard_ref: "UL 9540 Section 36"
+    parameters:
+      scada_input: "FLT_SMPS"
+      trigger_value: 1.0
+    measurements:
+      - "LOCK_OUT_AC"
+      - "LOCK_OUT_DC"
+      - "IAC_A1_"
+      - "IDC_1"
+    pass_fail_rules:
+      both_lockouts_must_trip: true
+      clearing_time_max_s: 0.1
+      controlled_shutdown: true
+
+  # =========================================================================
+  # 13. Steady-State Performance
+  # =========================================================================
+
+  ess_dc_link_regulation:
+    description: "DC link voltage regulation under load step"
+    category: "control_performance"
+    standard_ref: "IEEE 1547-2018 Section 7.2"
+    parameters:
+      dc_link_ref_voltage: 400
+      load_step_pct: 50
+      step_direction: "increase"
+    measurements:
+      - "VLINK_1"
+      - "VLINK_2"
+      - "IAC_A1_"
+      - "IAC_B1_"
+      - "IAC_C1_"
+      - "IDC_1"
+    pass_fail_rules:
+      steady_state_error_max_pct: 2.0
+      overshoot_max_pct: 10.0
+      settling_time_max_ms: 100
+      dc_link_ripple_max_pct: 5.0
+
+  ess_battery_charge_regulation:
+    description: "Battery CC-CV charging regulation"
+    category: "control_performance"
+    standard_ref: "IEC 62619 Section 6.3"
+    parameters:
+      target_voltage: 490
+      charge_current_limit: 40            # 1C rate
+      cv_threshold_voltage: 490
+    measurements:
+      - "VDC"
+      - "IDC_1"
+      - "IDC_2"
+      - "VLINK_2"
+    pass_fail_rules:
+      voltage_regulation_error_max_pct: 1.0
+      current_limit_overshoot_max_pct: 5.0
+      cv_transition_smooth: true

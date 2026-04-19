@@ -1,0 +1,84 @@
+{
+  "_doc": "IEEE 2800-2022 Grid-Forming (GFM) IBR test parameters for VSM inverter (invertertest.tse)",
+  "model": {
+    "tse_path": "C:/Users/junpr/Downloads/invertertest.tse",
+    "cpd_path": "C:/Users/junpr/Downloads/invertertest Target files/virtual sync machine inverter.cpd",
+    "device": "HIL101",
+    "simulation_step_s": 1.0e-6,
+    "signal_processing_step_s": 100.0e-6,
+    "carrier_freq_hz": 4000.0,
+    "dead_time_s": 0.5e-6
+  },
+  "grid": {
+    "nominal_voltage_rms_ll": 230.0,
+    "nominal_voltage_peak_ph": 187.79,
+    "nominal_frequency_hz": 50.0,
+    "nominal_omega_rad_s": 314.159,
+    "Lgrid_h": 0.001,
+    "Rgrid_ohm": 0.1
+  },
+  "vsm": {
+    "_doc": "VSM swing-equation control parameters",
+    "moment_of_inertia_J_default": 0.3,
+    "moment_of_inertia_J_test_set": [0.1, 0.3, 0.8],
+    "damping_D_default": 10.0,
+    "voltage_droop_Kv_default": 1.0e-4,
+    "voltage_droop_Kv_max": 1.0e-3,
+    "phi_initial": 0.45,
+    "omega_init_rad_s": 377.0
+  },
+  "ieee_2800": {
+    "_doc": "IEEE 2800-2022 GFM compliance thresholds",
+    "voltage_source_behavior": {
+      "phase_angle_max_jump_deg": 25.0,
+      "phase_jump_recovery_time_s": 0.5,
+      "voltage_recovery_time_s": 0.4,
+      "voltage_recovery_threshold_pu": 0.95
+    },
+    "virtual_inertia": {
+      "synthetic_inertia_H_min_s": 5.0,
+      "synthetic_inertia_H_max_s": 10.0,
+      "rocof_response_threshold_hz_per_s": 1.0,
+      "frequency_nadir_min_pu": 0.97,
+      "settling_time_max_s": 5.0
+    },
+    "fast_fault_current_injection": {
+      "_doc": "FFCI: reactive current injection during voltage sag",
+      "response_time_max_ms": 20.0,
+      "ffci_current_min_pu": 1.0,
+      "ffci_current_max_pu": 1.5,
+      "voltage_sag_trigger_pu": 0.5,
+      "sustain_duration_s": 0.3
+    },
+    "frequency_support": {
+      "droop_pct_min": 3.0,
+      "droop_pct_max": 5.0,
+      "deadband_hz": 0.036,
+      "primary_response_time_max_s": 2.0,
+      "active_power_change_per_freq_pu": 20.0
+    },
+    "phase_jump_response": {
+      "phase_jump_deg_test_set": [10.0, 20.0, 25.0],
+      "max_overcurrent_pu": 1.5,
+      "stability_recovery_time_s": 1.0
+    },
+    "harmonic_damping": {
+      "voltage_thd_max_pct": 5.0,
+      "current_thd_max_pct": 5.0,
+      "individual_harmonic_max_pct": 4.0
+    }
+  },
+  "test_execution": {
+    "settling_time_s": 2.0,
+    "capture_rate_hz": 50000,
+    "default_capture_duration_s": 2.0,
+    "trigger_pre_buffer_s": 0.1
+  },
+  "signals": {
+    "scada_inputs": ["Pref", "Qref", "J", "D", "Kv"],
+    "voltage_measurements": ["Va", "Vb", "Vc", "Vab", "Vbc", "VDC"],
+    "current_measurements": ["Ia", "Ib", "Ic", "Idc_link"],
+    "probes": ["teta", "w", "Te", "Pe", "Qe", "w_phi"],
+    "grid_source": "Vgrid"
+  }
+}

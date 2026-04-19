@@ -1,0 +1,115 @@
+flowchart TB
+    subgraph USER["USER INPUT"]
+        direction LR
+        U1["자연어 목표<br/>(CLI / Web)"]
+        U2[".tse 모델 업로드"]
+        U3["시나리오 YAML"]
+    end
+
+    subgraph ENTRY["ENTRY LAYER"]
+        direction LR
+        E1["main.py<br/>CLI + FastAPI+SSE"]
+        E2["configs/<br/>model.yaml<br/>scenarios.yaml"]
+        E3["prompts/<br/>planner.md<br/>analyzer.md"]
+    end
+
+    subgraph GRAPH["LANGGRAPH STATE MACHINE"]
+        direction TB
+        N1(["1. load_model<br/>HIL load + signals + RAG"])
+        N2(["2. plan_tests<br/>YAML or Claude Planner"])
+        N3(["3. execute_scenario<br/>stimulus + capture + pass/fail"])
+        D1{route_after_exec}
+        N4(["4. analyze_failure<br/>Claude Analyzer diagnosis"])
+        D2{route_after_analysis}
+        N5(["5. apply_fix<br/>XCP / SCADA calibration"])
+        N6(["6. advance_scenario"])
+        N7(["7. generate_report<br/>HTML / Xray"])
+        N1 --> N2 --> N3 --> D1
+        D1 -- "PASS + more" --> N6
+        D1 -- "FAIL retries lt 3" --> N4
+        D1 -- "DONE" --> N7
+        N4 --> D2
+        D2 -- "fixable conf gt 0.5" --> N5
+        D2 -- "escalate" --> N6
+        N5 --> N3
+        N6 --> N3
+        N7 --> END(["END"])
+    end
+
+    subgraph FT["FAULT TEMPLATES (10)"]
+        direction LR
+        FT1["overvoltage<br/>undervoltage"]
+        FT2["voltage_sag<br/>voltage_swell<br/>(LVRT/HVRT)"]
+        FT3["frequency_deviation<br/>(IEEE 1547 OF/UF)"]
+        FT4["short_circuit<br/>open_circuit"]
+        FT5["vsm_steady_state<br/>vsm_pref_step<br/>phase_jump<br/>(IEEE 2800 GFM)"]
+    end
+
+    subgraph TOOLS["TOOL EXECUTORS"]
+        direction LR
+        T1["hil_tools<br/>load/start/stop<br/>signal_write/read<br/>capture / fault_inject"]
+        T2["xcp_tools<br/>read/write<br/>whitelist:<br/>Kp Ki Kd J D Kv"]
+        T3["rag_tools<br/>Qdrant / Chroma"]
+        T4["can_tools<br/>DBC parser"]
+    end
+
+    subgraph EXT["EXTERNAL SYSTEMS"]
+        direction LR
+        X1["Typhoon HIL<br/>HIL101 / HIL606<br/>or VHIL Mock"]
+        X2["ECU<br/>pyXCP via CAN"]
+        X3["Claude API<br/>sonnet-4-20250514"]
+        X4["IEEE / IEC<br/>standards KB"]
+    end
+
+    subgraph SAFE["SAFETY LAYER"]
+        S1["validator.py<br/>voltage / current limits<br/>XCP whitelist<br/>fault count<br/>MAX_HEAL_RETRIES = 3"]
+    end
+
+    subgraph OUT["OUTPUTS"]
+        direction LR
+        O1["SSE Event Stream<br/>(realtime web dashboard)"]
+        O2["HTML report<br/>(reports/)"]
+        O3["Xray JSON<br/>(JIRA)"]
+        O4["pytest code<br/>test_project_*/<br/>(codegen pipeline)"]
+    end
+
+    USER --> ENTRY
+    ENTRY --> GRAPH
+    N3 -.uses.-> FT
+    FT -.calls.-> T1
+    N1 -.uses.-> T1
+    N1 -.uses.-> T3
+    N2 -.uses.-> T3
+    N2 -.calls.-> X3
+    N4 -.calls.-> X3
+    N5 -.uses.-> T2
+    N3 -.uses.-> T1
+    T1 -.runs on.-> X1
+    T2 -.connects.-> X2
+    T3 -.searches.-> X4
+    SAFE -.guards.-> T1
+    SAFE -.guards.-> T2
+    SAFE -.guards.-> N5
+    GRAPH --> OUT
+    N7 --> O2
+    N7 --> O3
+    GRAPH -.streams.-> O1
+    ENTRY -.codegen.-> O4
+
+    classDef userClass fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
+    classDef entryClass fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef graphClass fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px,color:#000
+    classDef ftClass fill:#ffe0b2,stroke:#ef6c00,stroke-width:2px,color:#000
+    classDef toolsClass fill:#d1c4e9,stroke:#5e35b1,stroke-width:2px,color:#000
+    classDef extClass fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
+    classDef safeClass fill:#f8bbd0,stroke:#ad1457,stroke-width:3px,color:#000
+    classDef outClass fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000
+
+    class U1,U2,U3 userClass
+    class E1,E2,E3 entryClass
+    class N1,N2,N3,N4,N5,N6,N7,D1,D2,END graphClass
+    class FT1,FT2,FT3,FT4,FT5 ftClass
+    class T1,T2,T3,T4 toolsClass
+    class X1,X2,X3,X4 extClass
+    class S1 safeClass
+    class O1,O2,O3,O4 outClass

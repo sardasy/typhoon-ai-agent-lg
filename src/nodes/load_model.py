@@ -38,7 +38,7 @@ async def load_model(state: AgentState) -> dict[str, Any]:
     cfg = {}
     p = Path(config_path)
     if p.exists():
-        cfg = yaml.safe_load(p.read_text()) or {}
+        cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
     model_cfg = cfg.get("model", {}) or {}
     model_path = model_cfg.get("path", "")
