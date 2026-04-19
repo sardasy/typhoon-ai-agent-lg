@@ -1,20 +1,36 @@
 """
-RAG Tools — Qdrant vector search for standards, API docs, test history.
+RAG Tools — vector search for standards, API docs, test history.
+
+Backend priority: ChromaDB (embedded, no server) > Qdrant > mock KB.
+ChromaDB is the default; a populated `chroma_db/` directory is required.
+Run `python scripts/index_knowledge.py` to (re)build the index.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+try:
+    import chromadb
+    from chromadb.config import Settings
+    HAS_CHROMA = True
+except ImportError:
+    HAS_CHROMA = False
 
 try:
     from qdrant_client import QdrantClient
     HAS_QDRANT = True
 except ImportError:
     HAS_QDRANT = False
+
+# Repo-level Chroma persistence directory
+_CHROMA_DIR = Path(__file__).resolve().parents[2] / "chroma_db"
 
 RAG_TOOLS: list[dict] = [
     {
@@ -111,9 +127,54 @@ class RAGToolExecutor:
         sources = tool_input.get("sources", ["api_docs", "standards", "test_history"])
         top_k = tool_input.get("top_k", 5)
 
+        # Priority: Chroma (embedded) > Qdrant (server) > mock
+        if HAS_CHROMA and _CHROMA_DIR.exists():
+            try:
+                return self._search_chroma(query, sources, top_k)
+            except Exception as exc:
+                logger.warning("Chroma search failed (%s); falling back", exc)
         if HAS_QDRANT and self._client:
             return await self._search_qdrant(query, sources, top_k)
         return self._search_mock(query, sources, top_k)
+
+    def _search_chroma(self, query: str, sources: list[str], top_k: int) -> dict:
+        """Query the embedded ChromaDB at chroma_db/ for each source."""
+        client = chromadb.PersistentClient(
+            path=str(_CHROMA_DIR),
+            settings=Settings(anonymized_telemetry=False),
+        )
+        existing = {c.name for c in client.list_collections()}
+        results = []
+        for src in sources:
+            collection_name = f"{self.collection_prefix}_{src}"
+            if collection_name not in existing:
+                continue
+            col = client.get_collection(name=collection_name)
+            if col.count() == 0:
+                continue
+            try:
+                hits = col.query(query_texts=[query], n_results=min(top_k, col.count()))
+            except Exception as exc:
+                logger.warning("Chroma query on %s failed: %s", collection_name, exc)
+                continue
+            ids = (hits.get("ids") or [[]])[0]
+            docs = (hits.get("documents") or [[]])[0]
+            metas = (hits.get("metadatas") or [[]])[0]
+            dists = (hits.get("distances") or [[]])[0]
+            for i, (doc_id, doc, meta, dist) in enumerate(
+                zip(ids, docs, metas or [{}] * len(ids), dists or [0.0] * len(ids))
+            ):
+                # Convert distance -> score (cosine: 1 - dist)
+                score = max(0.0, 1.0 - float(dist)) if dist else 1.0
+                results.append({
+                    "id": doc_id,
+                    "source": src,
+                    "text": doc,
+                    "score": score,
+                    "metadata": meta or {},
+                })
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return {"query": query, "results": results[:top_k]}
 
     def _search_mock(self, query: str, sources: list[str], top_k: int) -> dict:
         results = []
