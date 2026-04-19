@@ -48,11 +48,19 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
             params.get("ramp_duration_s", 0) + params.get("hold_duration_s", 0) + 0.2,
             0.5,
         )
-        cap_result = await hil.execute("hil_capture", {
+        cap_kwargs = {
             "signals": measurements,
             "duration_s": duration,
             "analysis": ["mean", "max", "min", "rms", "overshoot", "rise_time"],
-        })
+        }
+        # Pass through optional capture-tuning params from the scenario
+        for k in ("heal_target_param", "heal_target_threshold",
+                  "rate_hz", "force_polling",
+                  "trigger_source", "trigger_threshold", "trigger_edge",
+                  "trigger_timeout_s"):
+            if k in params:
+                cap_kwargs[k] = params[k]
+        cap_result = await hil.execute("hil_capture", cap_kwargs)
         if "error" in cap_result:
             # Real-mode capture failure: do NOT fall back to PASS
             status, fail_reason = "error", f"capture failed: {cap_result['error']}"

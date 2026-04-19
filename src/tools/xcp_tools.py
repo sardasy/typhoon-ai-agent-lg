@@ -10,6 +10,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Demo helper: tracks the most recent successful XCP write so the
+# mock HIL capture path can simulate convergence after apply_fix.
+LAST_XCP_WRITE: dict = {}
+
 try:
     from pyxcp import Master as XCPMaster
     from pya2ldb import DB as A2LDB
@@ -69,6 +73,8 @@ class XCPToolExecutor:
                 "BMS_scanInterval_ch11", "BMS_scanInterval_ch12",
                 "BMS_OVP_threshold", "BMS_UVP_threshold",
                 "Ctrl_Kp", "Ctrl_Ki", "Ctrl_Kd",
+                # IEEE 2800 GFM tunables -- safe to retune via heal loop
+                "J", "D", "Kv",
             }
 
     async def execute(self, tool_name: str, tool_input: dict) -> dict[str, Any]:
@@ -146,6 +152,8 @@ class XCPToolExecutor:
         if HAS_XCP:
             cal = self._a2l_db.get_calibration(var_name)
             self._session.download(cal.address, cal.encode(value))
+        # Record for demo / introspection
+        LAST_XCP_WRITE[var_name] = float(value)
         return {"variable": var_name, "written_value": value, "status": "ok"}
 
     async def _daq_start(self, params: dict) -> dict:

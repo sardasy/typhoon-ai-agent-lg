@@ -358,10 +358,35 @@ class HILToolExecutor:
                         s["rms"] = float((sum(x*x for x in data) / len(data)) ** 0.5)
                 stats.append(s)
         else:
-            stats = [
-                {"signal": sig, "mean": 0.0, "max": 0.0, "min": 0.0}
-                for sig in signals
-            ]
+            # Mock data with optional self-healing simulation:
+            # When the scenario sets  and the XCP executor
+            # has recorded a write of that param meeting ,
+            # we return waveform stats that satisfy  rules so
+            # the heal-loop demo converges visibly without real HIL hardware.
+            from .xcp_tools import LAST_XCP_WRITE
+            heal_param = params.get("heal_target_param", "")
+            heal_thr = params.get("heal_target_threshold", float("inf"))
+            heal_satisfied = bool(heal_param) and (
+                LAST_XCP_WRITE.get(heal_param, 0.0) >= heal_thr
+            )
+            if heal_satisfied:
+                stats = []
+                for sig in signals:
+                    is_relay = ("relay" in sig.lower() or "trip" in sig.lower())
+                    s = {
+                        "signal": sig,
+                        "mean": 1.0 if is_relay else 0.5,
+                        "max": 1.0 if is_relay else 0.5,
+                        "min": 0.0 if is_relay else 0.5,
+                        "rms": 1.0 if is_relay else 0.5,
+                        "rise_time_ms": 50.0 if is_relay else None,
+                    }
+                    stats.append(s)
+            else:
+                stats = [
+                    {"signal": sig, "mean": 0.0, "max": 0.0, "min": 0.0}
+                    for sig in signals
+                ]
 
         return {"capture_duration_s": duration, "statistics": stats}
 
