@@ -87,8 +87,14 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
 # CLI mode
 # ---------------------------------------------------------------------------
 
-async def run_cli(goal: str, config_path: str):
-    """Stream graph execution to terminal."""
+async def run_cli(goal: str, config_path: str, hitl: bool = False):
+    """Stream graph execution to terminal.
+
+    When ``hitl`` (or env ``THAA_HITL=1``) is set, the graph compiles with
+    ``interrupt_before=['apply_fix']``: after the analyzer proposes an XCP
+    write, the run pauses for human approval before any calibration is
+    applied.
+    """
     try:
         import io, sys as _sys
         from rich.console import Console
@@ -100,45 +106,138 @@ async def run_cli(goal: str, config_path: str):
 
     from src.graph import compile_graph
 
-    app = compile_graph()
+    hitl_active = hitl or os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
+    app = compile_graph(hitl=hitl_active)
     initial = make_initial_state(goal, config_path)
+
+    # When HITL is on we need a thread_id so the checkpointer can resume.
+    run_config = (
+        {"configurable": {"thread_id": f"thaa-cli-{int(datetime.datetime.now().timestamp())}"}}
+        if hitl_active else {}
+    )
 
     if HAS_RICH:
         from rich.panel import Panel
-        console.print(Panel(goal, title="[bold]Test Goal[/bold]", border_style="blue"))
+        title = "[bold]Test Goal[/bold]" + (" [yellow](HITL)[/yellow]" if hitl_active else "")
+        console.print(Panel(goal, title=title, border_style="blue"))
     else:
-        print(f"\n=== Test Goal: {goal} ===\n")
+        print(f"\n=== Test Goal: {goal} {'(HITL ENABLED)' if hitl_active else ''} ===\n")
 
     prev_event_count = 0
+    input_value = initial
 
-    # Stream through graph nodes
-    async for step_output in app.astream(initial):
-        # step_output is {node_name: state_update}
-        for node_name, state_update in step_output.items():
-            if node_name == "__end__":
-                continue
+    while True:
+        # astream yields {node_name: update_dict} per executed node.
+        # When `interrupt_before` fires, astream simply returns (no event)
+        # and snapshot.next will hold the pending node names.
+        async for step_output in app.astream(input_value, config=run_config):
+            for node_name, state_update in step_output.items():
+                if node_name in ("__end__", "__interrupt__"):
+                    # __interrupt__ marks the pause; resolved below via snapshot.
+                    continue
+                if not isinstance(state_update, dict):
+                    continue
+                events = state_update.get("events", [])
+                for ev in events[prev_event_count:]:
+                    _print_event(ev, console, HAS_RICH)
+                prev_event_count = 0
 
-            events = state_update.get("events", [])
-            for ev in events[prev_event_count:]:
-                etype = ev.get("event_type", "").upper()
-                node = ev.get("node", "")
-                msg = ev.get("message", "")
+        if not hitl_active:
+            break
 
-                if HAS_RICH:
-                    color_map = {
-                        "THOUGHT": "cyan", "ACTION": "yellow",
-                        "OBSERVATION": "green", "RESULT": "bold green",
-                        "PLAN": "blue", "DIAGNOSIS": "yellow",
-                        "REPORT": "bold white", "ERROR": "bold red",
-                    }
-                    if "FAIL" in msg.upper():
-                        color_map["RESULT"] = "bold red"
-                    c = color_map.get(etype, "white")
-                    console.print(f"  [{c}][{etype}][/{c}] [dim]{node}[/dim] {msg}")
-                else:
-                    print(f"  [{etype}] {node}: {msg}")
+        snapshot = app.get_state(run_config)
+        if not snapshot.next:
+            break  # graph reached END
 
-            prev_event_count = 0  # events list is appended fresh per step
+        # We are paused before a node (default: apply_fix). Prompt the user.
+        decision = _hitl_prompt(
+            {
+                "next": list(snapshot.next),
+                "diagnosis": snapshot.values.get("diagnosis"),
+                "scenario": snapshot.values.get("current_scenario"),
+            },
+            console, HAS_RICH,
+        )
+        if decision == "approve":
+            input_value = None  # resume
+            continue
+        if decision == "reject":
+            # Force the analyzer's verdict to "escalate" so route_after_analysis
+            # bypasses apply_fix on this attempt.
+            app.update_state(run_config, {
+                "diagnosis": {"corrective_action_type": "escalate"},
+            })
+            input_value = None
+            continue
+        # abort
+        if HAS_RICH:
+            console.print("[red]Aborted by operator.[/red]")
+        else:
+            print("Aborted by operator.")
+        break
+
+    if HAS_RICH:
+        console.print("\n[dim]Done.[/dim]\n")
+
+
+def _print_event(ev: dict, console, has_rich: bool) -> None:
+    etype = ev.get("event_type", "").upper()
+    node = ev.get("node", "")
+    msg = ev.get("message", "")
+    if has_rich:
+        color_map = {
+            "THOUGHT": "cyan", "ACTION": "yellow",
+            "OBSERVATION": "green", "RESULT": "bold green",
+            "PLAN": "blue", "DIAGNOSIS": "yellow",
+            "REPORT": "bold white", "ERROR": "bold red",
+        }
+        if "FAIL" in msg.upper():
+            color_map["RESULT"] = "bold red"
+        c = color_map.get(etype, "white")
+        console.print(f"  [{c}][{etype}][/{c}] [dim]{node}[/dim] {msg}")
+    else:
+        print(f"  [{etype}] {node}: {msg}")
+
+
+def _hitl_prompt(interrupt: dict, console, has_rich: bool) -> str:
+    """Show the proposed action and ask the operator to approve / reject."""
+    diag = interrupt.get("diagnosis") or {}
+    scen = interrupt.get("scenario") or {}
+    sid = scen.get("scenario_id", "?")
+    action = diag.get("corrective_action_type", "?")
+    param = diag.get("corrective_param", "?")
+    value = diag.get("corrective_value")
+    conf = diag.get("confidence", 0.0)
+    desc = diag.get("root_cause_description", "")
+
+    if has_rich:
+        from rich.panel import Panel
+        body = (
+            f"[bold]Scenario:[/bold] {sid}\n"
+            f"[bold]Root cause:[/bold] {desc}\n"
+            f"[bold]Confidence:[/bold] {conf:.0%}\n"
+            f"[bold]Proposed action:[/bold] [yellow]{action}[/yellow] "
+            f"[white]{param}[/white] = [cyan]{value}[/cyan]"
+        )
+        console.print(Panel(body, title="[bold yellow]HITL approval needed[/bold yellow]",
+                            border_style="yellow"))
+    else:
+        print("\n=== HITL APPROVAL NEEDED ===")
+        print(f"Scenario       : {sid}")
+        print(f"Root cause     : {desc}")
+        print(f"Confidence     : {conf:.0%}")
+        print(f"Proposed action: {action} {param} = {value}\n")
+
+    while True:
+        choice = input("Approve apply_fix? [y]es / [n]o (escalate) / [a]bort: ").strip().lower()
+        if choice in ("y", "yes"):
+            return "approve"
+        if choice in ("n", "no"):
+            return "reject"
+        if choice in ("a", "abort", "q", "quit"):
+            return "abort"
+
+
 
     if HAS_RICH:
         console.print("\n[dim]Done.[/dim]\n")
@@ -524,12 +623,14 @@ def main():
     parser.add_argument("--config", type=str, default="configs/model.yaml")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--hitl", action="store_true",
+                        help="Human-in-the-loop: pause before apply_fix for approval")
     args = parser.parse_args()
 
     if args.server:
         run_server(args.config, args.host, args.port)
     elif args.goal:
-        asyncio.run(run_cli(args.goal, args.config))
+        asyncio.run(run_cli(args.goal, args.config, hitl=args.hitl))
     else:
         parser.print_help()
         sys.exit(1)

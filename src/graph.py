@@ -40,8 +40,10 @@ Graph topology:
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from .state import AgentState
@@ -187,14 +189,42 @@ def build_graph() -> StateGraph:
     return graph
 
 
-def compile_graph():
+def compile_graph(
+    *,
+    hitl: bool | None = None,
+    interrupt_nodes: tuple[str, ...] = ("apply_fix",),
+    checkpointer=None,
+):
     """Build and compile the graph, ready to invoke.
+
+    Parameters
+    ----------
+    hitl
+        Human-in-the-loop mode. When True the graph pauses BEFORE
+        ``interrupt_nodes`` so an operator can review the proposed action
+        (typically the XCP calibration write in ``apply_fix``) and resume
+        with ``Command(resume={...})`` or ``invoke(None, config)``.
+        When None (default), reads ``THAA_HITL`` env var.
+    interrupt_nodes
+        Node names to pause before. Default: ``("apply_fix",)``.
+    checkpointer
+        Optional LangGraph checkpointer. When ``hitl`` is True and no
+        checkpointer is supplied, an in-process ``MemorySaver`` is used.
 
     LangSmith tracing is enabled automatically when these env vars are set:
       LANGCHAIN_TRACING_V2=true
       LANGCHAIN_API_KEY=ls__...
       LANGCHAIN_PROJECT=thaa          (optional, defaults to "default")
-    No code changes required — LangChain reads them at import time.
     """
+    if hitl is None:
+        hitl = os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
+
     graph = build_graph()
-    return graph.compile()
+    compile_kwargs: dict = {}
+    if hitl:
+        compile_kwargs["checkpointer"] = checkpointer or MemorySaver()
+        compile_kwargs["interrupt_before"] = list(interrupt_nodes)
+    elif checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+
+    return graph.compile(**compile_kwargs)
