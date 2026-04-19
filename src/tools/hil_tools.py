@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -210,7 +211,19 @@ class HILToolExecutor:
             if not path:
                 return {"error": "model_path required for load"}
             if HAS_TYPHOON:
-                hil.load_model(file=path, offlineMode=False)
+                # Try real hardware first; fall back to VHIL when no device
+                # is connected. VHIL still requires a real .cpd compiled by
+                # SchematicAPI but runs entirely on the host CPU.
+                use_vhil = params.get("vhil_device", True)
+                try:
+                    ok = hil.load_model(
+                        file=path, offlineMode=False, vhil_device=use_vhil,
+                    )
+                except TypeError:
+                    # Older API didn't have vhil_device kwarg
+                    ok = hil.load_model(file=path, offlineMode=False)
+                if ok is False:
+                    return {"error": f"hil.load_model returned False for {path}"}
             self.model_loaded = True
             self.model_path = path
             self.signals = self._discover_signals()
@@ -218,7 +231,7 @@ class HILToolExecutor:
                 "status": "model_loaded",
                 "model_path": path,
                 "signal_count": len(self.signals),
-                "signals": self.signals[:30],  # first 30 for context
+                "signals": self.signals[:30],
             }
 
         elif action == "start":
@@ -255,7 +268,19 @@ class HILToolExecutor:
         if waveform == "constant":
             value = params.get("value", 0)
             if HAS_TYPHOON:
-                hil.set_source_constant_value(signal, value=value)
+                # Try SCADA input first (P_ref / J / D / Kv tunables),
+                # fall back to source (grid / DC sources).
+                ok = False
+                try:
+                    res = hil.set_scada_input_value(signal, value=value)
+                    ok = res is not False
+                except Exception:
+                    pass
+                if not ok:
+                    try:
+                        hil.set_source_constant_value(signal, value=value)
+                    except Exception as exc:
+                        return {"error": f"Cannot set '{signal}': {exc}"}
             return {"signal": signal, "set_to": value}
 
         elif waveform == "ramp":
@@ -280,11 +305,15 @@ class HILToolExecutor:
         elif waveform == "sine":
             amp = params.get("value", 1.0)
             freq = params.get("frequency_hz", 50.0)
+            phase = params.get("phase_deg", 0.0)
             if HAS_TYPHOON:
                 hil.set_source_sine_waveform(
-                    signal, amplitude=amp, frequency=freq,
+                    signal, rms=amp / math.sqrt(2), frequency=freq, phase=phase,
                 )
-            return {"signal": signal, "waveform": "sine", "amplitude": amp, "frequency_hz": freq}
+            return {
+                "signal": signal, "waveform": "sine",
+                "amplitude": amp, "frequency_hz": freq, "phase_deg": phase,
+            }
 
         return {"error": f"Unknown waveform: {waveform}"}
 
@@ -304,11 +333,17 @@ class HILToolExecutor:
         analysis = params.get("analysis", ["mean", "max", "min"])
 
         if HAS_TYPHOON:
-            start_capture(
-                duration=duration,
-                signals=signals,
-                trigger_type=params.get("trigger_condition"),
-            )
+            # Newer Typhoon API: trigger_source/threshold/edge instead of trigger_type
+            sample_rate = params.get("rate_hz", 50000)
+            kwargs = dict(duration=duration, signals=signals, rate=sample_rate)
+            trig = params.get("trigger_source")
+            if trig:
+                kwargs.update(
+                    trigger_source=trig,
+                    trigger_threshold=params.get("trigger_threshold", 0.0),
+                    trigger_edge=params.get("trigger_edge", "Rising edge"),
+                )
+            start_capture(**kwargs)
             time.sleep(duration + 0.5)
             results = get_capture_results()
             stats = []
@@ -361,11 +396,18 @@ class HILToolExecutor:
     def _discover_signals(self) -> list[str]:
         """Extract signal names from loaded model."""
         if HAS_TYPHOON:
-            # In real usage, parse .tse or query model for signals
-            try:
-                return list(hil.get_all_signals().keys())
-            except Exception:
-                pass
+            for fn_name in ("get_analog_signals", "get_all_signals"):
+                fn = getattr(hil, fn_name, None)
+                if fn is None:
+                    continue
+                try:
+                    out = fn()
+                    if isinstance(out, dict):
+                        return list(out.keys())
+                    if isinstance(out, (list, tuple)):
+                        return list(out)
+                except Exception:
+                    continue
         return [
             "V_cell_1", "V_cell_2", "V_cell_3", "V_cell_4",
             "V_cell_5", "V_cell_6", "V_cell_7", "V_cell_8",

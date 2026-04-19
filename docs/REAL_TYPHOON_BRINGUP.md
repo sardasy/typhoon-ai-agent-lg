@@ -1,0 +1,104 @@
+# Real Typhoon HIL Bring-up Notes
+
+Status of running THAA against a real Typhoon HIL Control Center installation
+(currently tested against THCC 2026.1 SP1 + VHIL).
+
+## Environment
+
+| Item | Value |
+|------|-------|
+| THCC install | `C:\Users\junpr\AppData\Local\typhoon\THCC 2026.1 SP1\` |
+| Bundled Python | `python_portables\python3_portable\python.exe` (Python 3.11.4) |
+| Typhoon API | `typhoon.api.hil`, `typhoon.test.capture`, `typhoon.api.schematic_editor` |
+| Test device | VHIL (Virtual HIL) — no physical HIL606/HIL101 connected |
+
+## Launcher
+
+```bash
+# All commands routed through Typhoon's bundled Python
+scripts\run_with_typhoon.bat pytest tests/
+scripts\run_with_typhoon.bat python main.py --goal "..." --config configs/scenarios_vsm_gfm.yaml
+```
+
+## Verified working
+
+- ✅ `typhoon.api.hil` import + signal discovery (`get_analog_signals()`, `get_scada_inputs()`)
+- ✅ Model load: `hil.load_model(file=cpd, vhil_device=True)` — VHIL fallback automatic
+- ✅ Simulation start / stop lifecycle
+- ✅ SCADA input writes via `set_scada_input_value("P_ref"|"J"|"D"|"Kv", value=...)` —
+  `_signal_write` now auto-tries SCADA first, falls back to source.
+- ✅ 3-phase source: `set_source_sine_waveform("Vgrid", rms=..., frequency=..., phase=...)`
+  drives all three phases automatically.
+- ✅ Single-shot reads: `read_analog_signal(name=...)` for Va/Pe/Qe/w/VDC etc.
+- ✅ Compile via `SchematicAPI.load(tse) + .compile()` — produces `.cpd` next to `.tse`.
+
+## Known issues
+
+### 1. `start_capture` API parameter rename
+Old name `trigger_type` removed; new API uses `trigger_source` /
+`trigger_threshold` / `trigger_edge`. Already patched in
+`src/tools/hil_tools.py::_capture()`.
+
+### 2. Triggered captures sometimes return empty buffer
+When the trigger condition never fires (e.g., voltage never crosses the
+threshold within the window), `get_capture_results()` raises
+`Exception: There is no data in capture buffer.` THAA currently swallows
+this as a non-fatal `{"error": ...}` and the evaluator falls back to PASS
+when no waveform stats exist.
+
+**Action item**: tighten `_evaluate()` so that "no waveform" is treated as
+ERROR, not PASS. Or use untriggered (duration-only) captures for
+steady-state scenarios.
+
+### 3. Mock-only tests skipped
+`TestHILToolsMock` is marked `@skipif(HAS_TYPHOON)` because its assertions
+are written for the mock-mode return shape. Tests still run on Mock-only
+machines.
+
+### 4. Signal-name nuances
+| Concept | TSE schematic name | Typhoon API name |
+|---------|-------------------|------------------|
+| Power references | Component label `P_ref` / `Q_ref` | SCADA input `P_ref` / `Q_ref` |
+| VSM tunables | `J` / `D` / `Kv` | Same (SCADA inputs) |
+| Grid source | "Three Phase Voltage Source" named `Vgrid` | Single source name `Vgrid` |
+| Phase voltage probes | `Va` / `Vb` / `Vc` | Analog signals `Va` / `Vb` / `Vc` |
+| Grid phase probes | n/a | `Vgrid_a` / `Vgrid_b` / `Vgrid_c` (read-only) |
+
+The `scenarios_vsm_gfm.yaml` already uses these correct names.
+
+## Bring-up sanity script
+
+```python
+import typhoon.api.hil as hil
+
+cpd = r"C:\Users\junpr\Downloads\invertertest Target files\invertertest.cpd"
+hil.load_model(file=cpd, offlineMode=False, vhil_device=True)
+hil.start_simulation()
+
+hil.set_source_sine_waveform("Vgrid", rms=230/1.732, frequency=50.0, phase=0.0)
+hil.set_scada_input_value("P_ref", value=5000.0)
+hil.set_scada_input_value("J", value=0.3)
+hil.set_scada_input_value("D", value=10.0)
+
+import time; time.sleep(3.0)
+print("Pe =", hil.read_analog_signal(name="Pe"), "W")
+print("w  =", hil.read_analog_signal(name="w"), "rad/s")
+
+hil.stop_simulation()
+```
+
+Expected output: non-zero `Pe` and `w ≈ 314 rad/s` (50 Hz) within a few
+seconds.
+
+## Next steps
+
+1. **Capture robustness** — switch to untriggered captures for steady-state
+   scenarios; only use trigger when it's intrinsic to the test (e.g.
+   voltage sag detection).
+2. **Evaluator strictness** — change `_evaluate()` default from PASS to
+   ERROR when no waveform stats arrive.
+3. **Real device test** — once a HIL606/HIL101 is wired, change
+   `vhil_device=True` → `False` and rerun.
+4. **Heal loop demo** — pick one GFM scenario, intentionally mistune `J`
+   to make it fail, then watch the analyze_failure → apply_fix loop
+   converge.

@@ -278,6 +278,10 @@ class TestValidator:
 # Tool executors (mock mode)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    __import__("src.tools.hil_tools", fromlist=["HAS_TYPHOON"]).HAS_TYPHOON,
+    reason="Mock-mode behavior tests; skip when real Typhoon API is installed",
+)
 class TestHILToolsMock:
     @pytest.fixture
     def hil(self):

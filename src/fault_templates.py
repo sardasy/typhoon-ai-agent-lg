@@ -354,10 +354,10 @@ async def _vsm_steady_state(hil: Any, params: dict) -> dict:
         await hil.execute("hil_signal_write", {"signal": "D", "value": d})
     if kv is not None:
         await hil.execute("hil_signal_write", {"signal": "Kv", "value": kv})
-    await hil.execute("hil_signal_write", {"signal": "Pref", "value": pref})
-    await hil.execute("hil_signal_write", {"signal": "Qref", "value": qref})
+    await hil.execute("hil_signal_write", {"signal": "P_ref", "value": pref})
+    await hil.execute("hil_signal_write", {"signal": "Q_ref", "value": qref})
     await _safe_sleep(settle_s, hard_max=_MAX_SETTLE_S)
-    return {"template": "vsm_steady_state", "Pref": pref, "Qref": qref}
+    return {"template": "vsm_steady_state", "P_ref": pref, "Q_ref": qref}
 
 
 async def _vsm_pref_step(hil: Any, params: dict) -> dict:
@@ -374,9 +374,9 @@ async def _vsm_pref_step(hil: Any, params: dict) -> dict:
 
     await hil.execute("hil_signal_write", {"signal": "J", "value": j})
     await hil.execute("hil_signal_write", {"signal": "D", "value": d})
-    await hil.execute("hil_signal_write", {"signal": "Pref", "value": p_initial})
+    await hil.execute("hil_signal_write", {"signal": "P_ref", "value": p_initial})
     await _safe_sleep(pre_step_s, hard_max=_MAX_SETTLE_S)
-    await hil.execute("hil_signal_write", {"signal": "Pref", "value": p_step})
+    await hil.execute("hil_signal_write", {"signal": "P_ref", "value": p_step})
     await _safe_sleep(capture_s, hard_max=_MAX_CAPTURE_S)
     return {
         "template": "vsm_pref_step",
@@ -409,7 +409,7 @@ async def _phase_jump(hil: Any, params: dict) -> dict:
         )
 
     if pref is not None:
-        await hil.execute("hil_signal_write", {"signal": "Pref", "value": pref})
+        await hil.execute("hil_signal_write", {"signal": "P_ref", "value": pref})
 
     phases = [0, 120, 240]
     for i, sig in enumerate(signals):

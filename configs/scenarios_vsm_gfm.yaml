@@ -15,7 +15,7 @@
 # =============================================================================
 
 model:
-  path: "C:/Users/junpr/Downloads/invertertest.tse"
+  path: "C:/Users/junpr/Downloads/invertertest Target files/invertertest.cpd"
   device: "HIL101"
   timestep_us: 1.0
   grid_voltage_rms_ll: 230

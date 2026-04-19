@@ -18,7 +18,17 @@
       "Bash(pip show:*)",
       "WebSearch",
       "WebFetch(domain:www.typhoon-hil.com)",
-      "Bash(npx -y -p @mermaid-js/mermaid-cli mmdc --version)"
+      "Bash(npx -y -p @mermaid-js/mermaid-cli mmdc --version)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' --version)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -c 'import typhoon; print\\('\\\\''typhoon:'\\\\'', typhoon.__file__\\)')",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -c 'import typhoon.api.hil as hil; print\\('\\\\''hil OK'\\\\''\\)')",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -m pip install --quiet langgraph langchain-anthropic langchain-core pydantic pyyaml jinja2 fastapi uvicorn sse-starlette pytest pytest-asyncio rich httpx python-dotenv)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -m pytest tests/ -q)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -m pytest tests/test_graph.py::TestHILToolsMock::test_load -v)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -m pytest tests/test_codegen.py::TestHilApiDocs::test_parses_sphinx_html -v)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -m pip install --quiet beautifulsoup4)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' test_project_vsm_gfm/models/model_builder.py)",
+      "Bash('C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -c ' *)"
     ]
   }
 }

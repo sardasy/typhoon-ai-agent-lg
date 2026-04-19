@@ -2,7 +2,7 @@
   "_doc": "IEEE 2800-2022 Grid-Forming (GFM) IBR test parameters for VSM inverter (invertertest.tse)",
   "model": {
     "tse_path": "C:/Users/junpr/Downloads/invertertest.tse",
-    "cpd_path": "C:/Users/junpr/Downloads/invertertest Target files/virtual sync machine inverter.cpd",
+    "cpd_path": "C:/Users/junpr/Downloads/invertertest Target files/invertertest.cpd",
     "device": "HIL101",
     "simulation_step_s": 1.0e-6,
     "signal_processing_step_s": 100.0e-6,
@@ -75,10 +75,10 @@
     "trigger_pre_buffer_s": 0.1
   },
   "signals": {
-    "scada_inputs": ["Pref", "Qref", "J", "D", "Kv"],
+    "scada_inputs": ["P_ref", "Q_ref", "J", "D", "Kv"],
     "voltage_measurements": ["Va", "Vb", "Vc", "Vab", "Vbc", "VDC"],
     "current_measurements": ["Ia", "Ib", "Ic", "Idc_link"],
     "probes": ["teta", "w", "Te", "Pe", "Qe", "w_phi"],
-    "grid_source": "Vgrid"
+    "grid_sources": ["Vgrid_a", "Vgrid_b", "Vgrid_c"]
   }
 }

@@ -53,11 +53,18 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
             "duration_s": duration,
             "analysis": ["mean", "max", "min", "rms", "overshoot", "rise_time"],
         })
-        stats_raw = cap_result.get("statistics", [])
-        stats = [WaveformStats(**s) for s in stats_raw]
-
-        # 3. Evaluate pass/fail
-        status, fail_reason = _evaluate(rules, stats)
+        if "error" in cap_result:
+            # Real-mode capture failure: do NOT fall back to PASS
+            status, fail_reason = "error", f"capture failed: {cap_result['error']}"
+            stats = []
+        else:
+            stats_raw = cap_result.get("statistics", [])
+            stats = [WaveformStats(**s) for s in stats_raw]
+            # 3. Evaluate pass/fail
+            if measurements and not stats:
+                status, fail_reason = "error", "capture returned no statistics"
+            else:
+                status, fail_reason = _evaluate(rules, stats)
 
     except Exception as e:
         logger.exception(f"Scenario {sid} error")
