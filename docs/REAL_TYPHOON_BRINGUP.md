@@ -102,3 +102,31 @@ seconds.
 4. **Heal loop demo** — pick one GFM scenario, intentionally mistune `J`
    to make it fail, then watch the analyze_failure → apply_fix loop
    converge.
+
+## Capture tuning (post-bring-up)
+
+### Streaming capture status (typhoon.test.capture)
+- `start_capture()` accepts the new `trigger_source / trigger_threshold /
+  trigger_edge` parameter set (old `trigger_type` removed).
+- `get_capture_results(wait_capture=True)` **blocks indefinitely on VHIL**
+  (verified). With `wait_capture=False`, the buffer is reported empty even
+  after the API logs "desired number of samples are already captured".
+- This appears to be a VHIL limitation; on real HIL hardware it may work.
+
+### Polled capture (the fallback)
+- Implemented in `HILToolExecutor._capture_polled()`.
+- Caps effective rate at 50 Hz; uses single `read_analog_signal()` calls.
+- Empirical VHIL latency: **~250 ms / read** — limits us to ~2 samples per
+  second per signal. Sufficient for steady-state mean / RMS measurements,
+  not for fast transients.
+- Activated automatically when streaming returns empty buffer, or
+  explicitly via `force_polling: True` in scenario parameters.
+
+### Recommendation
+- Steady-state IEEE 2800 GFM scenarios (THD, voltage source behavior,
+  active power tracking) are validatable on VHIL with polled capture.
+- Dynamic scenarios (FFCI ≤20 ms response, phase jump resync, virtual
+  inertia step response) need either:
+  - Real Typhoon HIL hardware (where streaming capture should work), OR
+  - The standalone pytest project under `test_project_vsm_gfm/` driven
+    from inside `typhoon.test`'s native runner (different capture engine).

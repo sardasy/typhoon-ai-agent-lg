@@ -332,39 +332,95 @@ class HILToolExecutor:
         duration = params["duration_s"]
         analysis = params.get("analysis", ["mean", "max", "min"])
 
+        # NOTE on simulation lifecycle: this method runs BETWEEN
+        # _control(action='start') and _control(action='stop'); both are
+        # owned by the agent graph (load_model and generate_report nodes).
+        # Module-level imports above provide hil + time + start_capture +
+        # get_capture_results.
+
         if HAS_TYPHOON:
-            # Newer Typhoon API: trigger_source/threshold/edge instead of trigger_type
             sample_rate = params.get("rate_hz", 50000)
-            kwargs = dict(duration=duration, signals=signals, rate=sample_rate)
-            trig = params.get("trigger_source")
-            if trig:
-                kwargs.update(
-                    trigger_source=trig,
-                    trigger_threshold=params.get("trigger_threshold", 0.0),
-                    trigger_edge=params.get("trigger_edge", "Rising edge"),
-                )
-            start_capture(**kwargs)
-            time.sleep(duration + 0.5)
-            results = get_capture_results()
+            results = self._capture_typhoon(signals, duration, sample_rate, params)
+            if isinstance(results, dict) and "error" in results:
+                return results
             stats = []
             for sig in signals:
-                data = results.get(sig, [])
+                data = results.get(sig, []) if results else []
                 s = {"signal": sig}
-                if "mean" in analysis and data:
-                    s["mean"] = float(sum(data) / len(data))
-                if "max" in analysis and data:
-                    s["max"] = float(max(data))
-                if "min" in analysis and data:
-                    s["min"] = float(min(data))
+                if data:
+                    if "mean" in analysis:
+                        s["mean"] = float(sum(data) / len(data))
+                    if "max" in analysis:
+                        s["max"] = float(max(data))
+                    if "min" in analysis:
+                        s["min"] = float(min(data))
+                    if "rms" in analysis:
+                        s["rms"] = float((sum(x*x for x in data) / len(data)) ** 0.5)
                 stats.append(s)
         else:
-            # Mock data for development
             stats = [
                 {"signal": sig, "mean": 0.0, "max": 0.0, "min": 0.0}
                 for sig in signals
             ]
 
         return {"capture_duration_s": duration, "statistics": stats}
+
+    def _capture_typhoon(self, signals, duration, sample_rate, params):
+        """Stream-first, polled-fallback capture."""
+        if params.get("force_polling"):
+            return self._capture_polled(signals, duration, sample_rate)
+
+        kwargs = dict(duration=duration, signals=list(signals), rate=sample_rate,
+                      timeout=duration + 1.0)
+        trig = params.get("trigger_source")
+        if trig and trig.lower() != "forced":
+            edge = params.get("trigger_edge", "rising").lower()
+            edge = "rising" if edge.startswith("rising") else (
+                "falling" if edge.startswith("falling") else "rising"
+            )
+            kwargs.update(
+                trigger_source=trig,
+                trigger_threshold=params.get("trigger_threshold", 0.0),
+                trigger_edge=edge,
+            )
+        try:
+            start_capture(**kwargs)
+            df = get_capture_results(wait_capture=False)
+            if hasattr(df, "to_dict"):
+                return {sig: df[sig].tolist() for sig in signals if sig in df.columns}
+            if isinstance(df, dict):
+                return df
+        except Exception as exc:
+            logger.warning("streaming capture failed (%s); polling fallback", exc)
+        return self._capture_polled(signals, duration, sample_rate)
+
+    def _capture_polled(self, signals, duration, sample_rate):
+        """Polled fallback using single read_analog_signal calls.
+
+        VHIL polling latency is 10-50ms per call; we cap effective rate at
+        50 Hz and skip sleeps when reads are already slow. The loop bounds
+        itself by wall-clock duration so it always terminates.
+        """
+        out = {sig: [] for sig in signals}
+        sigs = list(signals)
+        poll_rate = min(sample_rate, 50)
+        dt = 1.0 / poll_rate
+        end_time = time.time() + duration
+        failures = {}
+        while time.time() < end_time:
+            t0 = time.time()
+            for sig in sigs:
+                try:
+                    out[sig].append(float(hil.read_analog_signal(name=sig)))
+                except Exception:
+                    failures[sig] = failures.get(sig, 0) + 1
+                    out[sig].append(0.0)
+            elapsed = time.time() - t0
+            if elapsed < dt:
+                time.sleep(dt - elapsed)
+        for sig, n in failures.items():
+            logger.warning("polled read of '%s' failed %d times", sig, n)
+        return out
 
     async def _fault_inject(self, params: dict) -> dict:
         fault_type = params["fault_type"]
