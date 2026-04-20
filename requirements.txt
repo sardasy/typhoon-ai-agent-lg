@@ -1,5 +1,6 @@
 # LangGraph + LangChain
 langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=2.0.0  # HITL state persistence across restarts
 langchain-anthropic>=0.3.0
 langchain-core>=0.3.0
 langsmith>=0.1.0

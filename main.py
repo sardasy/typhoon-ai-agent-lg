@@ -87,13 +87,23 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
 # CLI mode
 # ---------------------------------------------------------------------------
 
-async def run_cli(goal: str, config_path: str, hitl: bool = False):
+async def run_cli(
+    goal: str,
+    config_path: str,
+    hitl: bool = False,
+    checkpoint_db: str | None = None,
+    resume_thread: str | None = None,
+):
     """Stream graph execution to terminal.
 
     When ``hitl`` (or env ``THAA_HITL=1``) is set, the graph compiles with
     ``interrupt_before=['apply_fix']``: after the analyzer proposes an XCP
     write, the run pauses for human approval before any calibration is
     applied.
+
+    ``checkpoint_db`` enables persistent state via SqliteSaver. When
+    ``resume_thread`` is supplied, the agent resumes an existing paused
+    thread (typically after a crash / restart) instead of starting a new run.
     """
     try:
         import io, sys as _sys
@@ -104,77 +114,113 @@ async def run_cli(goal: str, config_path: str, hitl: bool = False):
         HAS_RICH = False
         console = None
 
-    from src.graph import compile_graph
+    from src.graph import acompile_graph, compile_graph
 
     hitl_active = hitl or os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
-    app = compile_graph(hitl=hitl_active)
-    initial = make_initial_state(goal, config_path)
+    # Auto-enable HITL when resuming (resume only makes sense for paused threads)
+    if resume_thread:
+        hitl_active = True
+
+    # Use async compile whenever we need a SQLite-backed checkpointer so the
+    # AsyncSqliteSaver can open its aiosqlite connection inside our loop.
+    if checkpoint_db:
+        app = await acompile_graph(hitl=hitl_active, checkpoint_db=checkpoint_db)
+    else:
+        app = compile_graph(hitl=hitl_active)
+
+    if resume_thread:
+        thread_id = resume_thread
+        initial = None  # resume from checkpoint
+    else:
+        initial = make_initial_state(goal, config_path)
+        thread_id = f"thaa-cli-{int(datetime.datetime.now().timestamp())}"
 
     # When HITL is on we need a thread_id so the checkpointer can resume.
     run_config = (
-        {"configurable": {"thread_id": f"thaa-cli-{int(datetime.datetime.now().timestamp())}"}}
+        {"configurable": {"thread_id": thread_id}}
         if hitl_active else {}
     )
 
+    banner = goal or (f"Resuming thread {thread_id}" if resume_thread else "")
+    tags = []
+    if hitl_active:
+        tags.append("HITL")
+    if checkpoint_db:
+        tags.append(f"DB={checkpoint_db}")
+    if resume_thread:
+        tags.append("RESUME")
+    tag_str = f" ({', '.join(tags)})" if tags else ""
     if HAS_RICH:
         from rich.panel import Panel
-        title = "[bold]Test Goal[/bold]" + (" [yellow](HITL)[/yellow]" if hitl_active else "")
-        console.print(Panel(goal, title=title, border_style="blue"))
+        console.print(Panel(banner, title=f"[bold]THAA{tag_str}[/bold]", border_style="blue"))
     else:
-        print(f"\n=== Test Goal: {goal} {'(HITL ENABLED)' if hitl_active else ''} ===\n")
+        print(f"\n=== THAA{tag_str}: {banner} ===\n")
 
     prev_event_count = 0
     input_value = initial
 
-    while True:
-        # astream yields {node_name: update_dict} per executed node.
-        # When `interrupt_before` fires, astream simply returns (no event)
-        # and snapshot.next will hold the pending node names.
-        async for step_output in app.astream(input_value, config=run_config):
-            for node_name, state_update in step_output.items():
-                if node_name in ("__end__", "__interrupt__"):
-                    # __interrupt__ marks the pause; resolved below via snapshot.
-                    continue
-                if not isinstance(state_update, dict):
-                    continue
-                events = state_update.get("events", [])
-                for ev in events[prev_event_count:]:
-                    _print_event(ev, console, HAS_RICH)
-                prev_event_count = 0
+    try:
+        while True:
+            # astream yields {node_name: update_dict} per executed node.
+            # When `interrupt_before` fires, astream simply returns (no event)
+            # and snapshot.next will hold the pending node names.
+            async for step_output in app.astream(input_value, config=run_config):
+                for node_name, state_update in step_output.items():
+                    if node_name in ("__end__", "__interrupt__"):
+                        # __interrupt__ marks the pause; resolved below via snapshot.
+                        continue
+                    if not isinstance(state_update, dict):
+                        continue
+                    events = state_update.get("events", [])
+                    for ev in events[prev_event_count:]:
+                        _print_event(ev, console, HAS_RICH)
+                    prev_event_count = 0
 
-        if not hitl_active:
+            if not hitl_active:
+                break
+
+            snapshot = app.get_state(run_config)
+            if not snapshot.next:
+                break  # graph reached END
+
+            # We are paused before a node (default: apply_fix). Prompt the user.
+            decision = _hitl_prompt(
+                {
+                    "next": list(snapshot.next),
+                    "diagnosis": snapshot.values.get("diagnosis"),
+                    "scenario": snapshot.values.get("current_scenario"),
+                },
+                console, HAS_RICH,
+            )
+            if decision == "approve":
+                input_value = None  # resume
+                continue
+            if decision == "reject":
+                # Force the analyzer's verdict to "escalate" so route_after_analysis
+                # bypasses apply_fix on this attempt.
+                app.update_state(run_config, {
+                    "diagnosis": {"corrective_action_type": "escalate"},
+                })
+                input_value = None
+                continue
+            # abort
+            if HAS_RICH:
+                console.print("[red]Aborted by operator.[/red]")
+            else:
+                print("Aborted by operator.")
             break
-
-        snapshot = app.get_state(run_config)
-        if not snapshot.next:
-            break  # graph reached END
-
-        # We are paused before a node (default: apply_fix). Prompt the user.
-        decision = _hitl_prompt(
-            {
-                "next": list(snapshot.next),
-                "diagnosis": snapshot.values.get("diagnosis"),
-                "scenario": snapshot.values.get("current_scenario"),
-            },
-            console, HAS_RICH,
-        )
-        if decision == "approve":
-            input_value = None  # resume
-            continue
-        if decision == "reject":
-            # Force the analyzer's verdict to "escalate" so route_after_analysis
-            # bypasses apply_fix on this attempt.
-            app.update_state(run_config, {
-                "diagnosis": {"corrective_action_type": "escalate"},
-            })
-            input_value = None
-            continue
-        # abort
-        if HAS_RICH:
-            console.print("[red]Aborted by operator.[/red]")
-        else:
-            print("Aborted by operator.")
-        break
+    finally:
+        # Release the async SQLite connection so the file lock is dropped
+        # (allows --list-threads / resume from a fresh process immediately).
+        saver = getattr(app, "checkpointer", None)
+        conn = getattr(saver, "conn", None)
+        if conn is not None and hasattr(conn, "close"):
+            close_result = conn.close()
+            if hasattr(close_result, "__await__"):
+                try:
+                    await close_result
+                except Exception:
+                    pass
 
     if HAS_RICH:
         console.print("\n[dim]Done.[/dim]\n")
@@ -616,6 +662,37 @@ document.getElementById('goal').addEventListener('keydown',e=>{if(e.key==='Enter
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+def _list_threads(checkpoint_db: str) -> int:
+    """Print every thread_id stored in the SQLite checkpoint database."""
+    import sqlite3
+    from pathlib import Path
+    p = Path(checkpoint_db).expanduser()
+    if not p.is_file():
+        print(f"[thaa] checkpoint db not found: {p}")
+        return 1
+    conn = sqlite3.connect(str(p))
+    try:
+        cur = conn.execute(
+            "SELECT thread_id, MAX(checkpoint_id) AS last_ckpt, COUNT(*) AS n "
+            "FROM checkpoints GROUP BY thread_id ORDER BY last_ckpt DESC"
+        )
+        rows = list(cur.fetchall())
+    except sqlite3.OperationalError as exc:
+        print(f"[thaa] cannot read {p}: {exc}")
+        return 1
+    finally:
+        conn.close()
+
+    if not rows:
+        print(f"[thaa] no threads in {p}")
+        return 0
+    print(f"[thaa] {len(rows)} thread(s) in {p}:\n")
+    print(f"  {'THREAD_ID':45s}  {'CHECKPOINTS':>11s}  LAST_CHECKPOINT_ID")
+    for thread_id, last_ckpt, n in rows:
+        print(f"  {thread_id:45s}  {n:>11d}  {last_ckpt}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="THAA — LangGraph HIL Agent")
     parser.add_argument("--goal", type=str, help="Test goal (NL)")
@@ -625,12 +702,31 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--hitl", action="store_true",
                         help="Human-in-the-loop: pause before apply_fix for approval")
+    parser.add_argument("--checkpoint-db", type=str,
+                        help="Path to SQLite checkpoint DB (persists HITL state across restarts)")
+    parser.add_argument("--resume-thread", type=str,
+                        help="Resume an existing paused thread by ID (requires --checkpoint-db)")
+    parser.add_argument("--list-threads", action="store_true",
+                        help="List all thread IDs in the checkpoint DB and exit")
     args = parser.parse_args()
+
+    if args.list_threads:
+        db = args.checkpoint_db or os.environ.get("THAA_CHECKPOINT_DB")
+        if not db:
+            print("--list-threads requires --checkpoint-db or THAA_CHECKPOINT_DB")
+            sys.exit(1)
+        sys.exit(_list_threads(db))
 
     if args.server:
         run_server(args.config, args.host, args.port)
-    elif args.goal:
-        asyncio.run(run_cli(args.goal, args.config, hitl=args.hitl))
+    elif args.resume_thread or args.goal:
+        asyncio.run(run_cli(
+            args.goal or "",
+            args.config,
+            hitl=args.hitl,
+            checkpoint_db=args.checkpoint_db,
+            resume_thread=args.resume_thread,
+        ))
     else:
         parser.print_help()
         sys.exit(1)

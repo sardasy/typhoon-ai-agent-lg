@@ -36,7 +36,10 @@
       "Bash(powershell -Command 'Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.Path -like '\\\\''*THCC*'\\\\''} | Stop-Process -Force; echo done')",
       "Bash(timeout 90 'C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -c ' *)",
       "Bash(powershell -Command 'Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.Path -like '\\\\''*THCC*'\\\\''} | Stop-Process -Force')",
-      "Bash(timeout 60 'C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -u -c ' *)"
+      "Bash(timeout 60 'C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -u -c ' *)",
+      "Bash(powershell -Command 'Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.StartTime -gt \\(Get-Date\\).AddMinutes\\(-5\\)} | Stop-Process -Force')",
+      "Bash(rm -rf runs)",
+      "Bash(mkdir -p runs)"
     ]
   }
 }

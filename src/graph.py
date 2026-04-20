@@ -189,13 +189,85 @@ def build_graph() -> StateGraph:
     return graph
 
 
+def _ensure_sqlite_schema(conn) -> None:
+    """Create LangGraph checkpoint tables on a sync sqlite3 connection.
+
+    Mirrors ``SqliteSaver.setup()`` but takes an already-opened connection
+    so the caller can close it immediately. Idempotent.
+    """
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    SqliteSaver(conn).setup()
+
+
+def make_sqlite_checkpointer(db_path: str):
+    """Return a *sync* ``SqliteSaver`` bound to ``db_path``.
+
+    Used by synchronous tooling such as ``--list-threads`` (read-only
+    SELECT) and by tests that exercise schema setup. For driving a
+    running graph use :func:`acompile_graph` instead, which opens an
+    async ``aiosqlite`` connection.
+    """
+    from pathlib import Path
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    p = Path(db_path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(p), check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    return saver
+
+
+async def _open_async_sqlite_saver(db_path: str):
+    """Await an ``aiosqlite.Connection`` and wrap it in ``AsyncSqliteSaver``.
+
+    Creates the schema synchronously first (fast, idempotent), then opens
+    the async connection inside the caller's event loop.
+    """
+    from pathlib import Path
+    import sqlite3
+    import aiosqlite
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    p = Path(db_path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # One-time sync schema setup.
+    boot = sqlite3.connect(str(p))
+    try:
+        _ensure_sqlite_schema(boot)
+    finally:
+        boot.close()
+    conn = await aiosqlite.connect(str(p))
+    return AsyncSqliteSaver(conn)
+
+
+def _resolve_hitl_and_db(hitl, checkpoint_db):
+    if hitl is None:
+        hitl = os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
+    if checkpoint_db is None:
+        checkpoint_db = os.environ.get("THAA_CHECKPOINT_DB") or None
+    return hitl, checkpoint_db
+
+
+def _build_compile_kwargs(hitl, interrupt_nodes, checkpointer):
+    compile_kwargs: dict = {}
+    if hitl:
+        compile_kwargs["checkpointer"] = checkpointer or MemorySaver()
+        compile_kwargs["interrupt_before"] = list(interrupt_nodes)
+    elif checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+    return compile_kwargs
+
+
 def compile_graph(
     *,
     hitl: bool | None = None,
     interrupt_nodes: tuple[str, ...] = ("apply_fix",),
     checkpointer=None,
+    checkpoint_db: str | None = None,
 ):
-    """Build and compile the graph, ready to invoke.
+    """Build and compile the graph synchronously.
 
     Parameters
     ----------
@@ -208,23 +280,55 @@ def compile_graph(
     interrupt_nodes
         Node names to pause before. Default: ``("apply_fix",)``.
     checkpointer
-        Optional LangGraph checkpointer. When ``hitl`` is True and no
-        checkpointer is supplied, an in-process ``MemorySaver`` is used.
+        Optional LangGraph checkpointer. When provided, takes precedence
+        over ``checkpoint_db``.
+    checkpoint_db
+        Path to a SQLite file used by ``SqliteSaver`` for persistent
+        checkpointing. This sync entry uses the sync ``SqliteSaver``,
+        which LangGraph treats as a legacy-only option -- for running
+        the async graph (``astream``) you almost always want
+        :func:`acompile_graph` instead. When ``None``, reads
+        ``THAA_CHECKPOINT_DB``; if still unset and ``hitl`` is True,
+        falls back to ``MemorySaver`` (in-process only).
 
     LangSmith tracing is enabled automatically when these env vars are set:
       LANGCHAIN_TRACING_V2=true
       LANGCHAIN_API_KEY=ls__...
       LANGCHAIN_PROJECT=thaa          (optional, defaults to "default")
     """
-    if hitl is None:
-        hitl = os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
+    hitl, checkpoint_db = _resolve_hitl_and_db(hitl, checkpoint_db)
+
+    if checkpointer is None and checkpoint_db:
+        checkpointer = make_sqlite_checkpointer(checkpoint_db)
 
     graph = build_graph()
-    compile_kwargs: dict = {}
-    if hitl:
-        compile_kwargs["checkpointer"] = checkpointer or MemorySaver()
-        compile_kwargs["interrupt_before"] = list(interrupt_nodes)
-    elif checkpointer is not None:
-        compile_kwargs["checkpointer"] = checkpointer
+    return graph.compile(**_build_compile_kwargs(hitl, interrupt_nodes, checkpointer))
 
-    return graph.compile(**compile_kwargs)
+
+async def acompile_graph(
+    *,
+    hitl: bool | None = None,
+    interrupt_nodes: tuple[str, ...] = ("apply_fix",),
+    checkpointer=None,
+    checkpoint_db: str | None = None,
+):
+    """Build and compile the graph, awaiting the async SQLite connection.
+
+    Call from inside ``asyncio.run`` (or an active event loop). When
+    ``checkpoint_db`` is set, attaches an ``AsyncSqliteSaver`` backed by
+    an ``aiosqlite.Connection`` that works across restarts.
+
+    The caller is responsible for closing the async connection when the
+    process is done:
+
+        saver = getattr(app, "checkpointer", None)
+        if saver is not None and hasattr(saver, "conn"):
+            await saver.conn.close()
+    """
+    hitl, checkpoint_db = _resolve_hitl_and_db(hitl, checkpoint_db)
+
+    if checkpointer is None and checkpoint_db:
+        checkpointer = await _open_async_sqlite_saver(checkpoint_db)
+
+    graph = build_graph()
+    return graph.compile(**_build_compile_kwargs(hitl, interrupt_nodes, checkpointer))

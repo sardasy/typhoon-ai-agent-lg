@@ -32,8 +32,12 @@ scenarios:
       heal_target_param: "J"     # hint for demo executor
       heal_target_threshold: 0.3 # mock passes once J >= this
     measurements:
-      - "Pe"
-      - "VSM_oscillation_relay"   # mock returns 0 by default => relay_must_trip fails
+      # Use real mock signal names so the signal-pre-check passes.
+      # `BMS_OVP_relay` is in the mock HIL discovery list and, thanks to the
+      # retry-aware mock, starts at 0.0 but flips to 1.0 after apply_fix
+      # writes J >= heal_target_threshold via XCP.
+      - "V_pack"
+      - "BMS_OVP_relay"
     pass_fail_rules:
       relay_must_trip: true
       response_time_max_ms: 500

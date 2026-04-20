@@ -75,10 +75,18 @@ app = compile_graph(hitl=True, checkpointer=SqliteSaver.from_conn_string("hitl.d
 ## State persistence
 
 The default `MemorySaver` is in-process — checkpoints disappear when the
-Python process exits. For multi-day reviews, swap in
-`SqliteSaver.from_conn_string("hitl.db")` or `PostgresSaver` (LangGraph
-ships both). The agent then becomes a long-running process that can be
-resumed across restarts using the persisted `thread_id`.
+Python process exits. For multi-day reviews or crash recovery, use
+**SQLite persistence**:
+
+```bash
+python main.py --goal "..." --hitl --checkpoint-db runs/hitl.sqlite
+python main.py --list-threads --checkpoint-db runs/hitl.sqlite
+python main.py --resume-thread <id> --checkpoint-db runs/hitl.sqlite
+```
+
+See [SQLITE_CHECKPOINTER.md](SQLITE_CHECKPOINTER.md) for the full guide.
+Postgres is a drop-in replacement (`AsyncPostgresSaver`) for multi-operator
+deployments; see the CLAUDE.md Phase 4 roadmap.
 
 ## Custom decision rules
 
