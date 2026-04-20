@@ -1,1 +1,1 @@
-"""Typhoon HIL AI Agent — LangGraph edition."""
+"""Typhoon HIL AI Agent -- LangGraph edition."""

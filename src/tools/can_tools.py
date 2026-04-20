@@ -1,5 +1,5 @@
 """
-CAN tools — DBC auto-loader.
+CAN tools -- DBC auto-loader.
 
 Parses a DBC file and returns a structured config list suitable for driving
 Typhoon HIL CAN Bus Send/Receive components (matches the signals schema in
@@ -25,7 +25,7 @@ try:
     HAS_CANTOOLS = True
 except ImportError:
     HAS_CANTOOLS = False
-    logger.info("cantools not installed — CAN DBC loader using regex fallback")
+    logger.info("cantools not installed -- CAN DBC loader using regex fallback")
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ CAN_TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Optional filter — only messages whose names appear "
+                        "Optional filter -- only messages whose names appear "
                         "in this list are returned. Omit to return all."
                     ),
                 },

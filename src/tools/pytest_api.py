@@ -45,7 +45,7 @@ _BUILTIN_MARKERS: tuple[str, ...] = (
     "no_cover",
 )
 
-# Reference repo — recorded in events/config for traceability.
+# Reference repo -- recorded in events/config for traceability.
 PYTEST_REPO_URL = "https://github.com/pytest-dev/pytest/"
 
 
