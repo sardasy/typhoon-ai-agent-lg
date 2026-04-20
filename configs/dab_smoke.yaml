@@ -1,0 +1,55 @@
+# =============================================================================
+# DAB (Dual Active Bridge) smoke test against the real HIL404.
+#
+# Schematic: C:\Users\a\Downloads\dab_standard.tse
+# Compiled:  C:\Users\a\Downloads\dab_standard Target files\dab_standard.cpd
+# Topology:  4x IGBT half-bridge, 1ph transformer, battery (400V nom, 100Ah,
+#            initial SOC 60%)
+#
+# Goal: exercise the full THAA graph (load_model -> plan_tests -> execute ->
+# report) against real hardware using one predefined, non-invasive scenario
+# (Enable=0, just read probes). Claude Planner is bypassed because the
+# `scenarios:` block is present.
+# =============================================================================
+
+model:
+  path: "C:/Users/a/Downloads/dab_standard Target files/dab_standard.cpd"
+  timestep_us: 100.0
+  compile_on_load: false
+
+hil_device:
+  serial: "00404-05-00190"
+
+dut_mode: "hil_model"
+
+safety:
+  max_voltage: 450.0          # schematic Vout nominal is 400V
+  max_current: 200.0          # Imax = Pmax/Vout = 60kW/400V = 150A, +margin
+  max_fault_injections: 5
+  auto_retry_limit: 3
+  timeout_per_test_s: 30.0
+
+ai:
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 2048
+  temperature: 0.0
+
+scenarios:
+
+  dab_idle_probe_read:
+    description: "DAB idle probe read (Enable=0, IGBTs off)"
+    category: "smoke"
+    standard_ref: "internal/bringup"
+    parameters:
+      # No stimulus -- Enable defaults to 0, so IGBTs stay off. The scenario
+      # just captures the three schematic probes for 1.5s.
+      hold_duration_s: 1.5
+    measurements:
+      - "Battery SOC [%]"
+      - "Pbatt"
+      - "phase shift"
+    pass_fail_rules:
+      # No rules -- a "smoke" scenario is just confirming we can complete the
+      # full load/start/capture/stop cycle on real hardware without errors.
+      # The evaluator returns PASS when all registered rules pass; an empty
+      # rule set is accepted.
