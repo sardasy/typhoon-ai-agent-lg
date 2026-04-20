@@ -13,21 +13,12 @@
 #   Grid source:    Vgrid (core/Three Phase Voltage Source)
 #   DC link source: Vdc_link (core/Voltage Source)
 #
-# ---- PRE-RUN REQUIREMENT (critical) ----
-# The schematic Vgrid block is empty, so the class default
-# (init_rms_value=0.0, init_frequency=50.0) applies: Vgrid starts at 0 V on
-# a 50 Hz phasor. Vdc_link likewise starts at 0 V. Running any VSM scenario
-# against this dead grid is meaningless. Before executing the graph, call:
-#
-#     hil.set_source_sine_waveform("Vgrid", rms=220.0, frequency=60.0,
-#                                   phase=0.0)
-#     hil.set_source_constant_value("Vdc_link", value=700.0)
-#
-# These values match `runtime_init_required` below. The current fault
-# templates (vsm_steady_state / vsm_pref_step / voltage_sag / phase_jump)
-# do NOT initialize Vgrid -- they only drive SCADA inputs and tune grid
-# amplitude via set_source_sine_waveform mid-scenario. Extending a template
-# with a `grid_init` helper is tracked as a separate follow-up task.
+# ---- Grid energisation ----
+# The schematic leaves Vgrid at the class default (0 V / 50 Hz) and Vdc_link
+# at 0 V. Each VSM scenario below declares a ``grid_init`` block; the
+# ``vsm_steady_state`` / ``vsm_pref_step`` templates in src/fault_templates.py
+# apply those writes before driving SCADA inputs, so scenarios see a live
+# 60 Hz / 220 V LN grid with a 700 V DC bus.
 #
 # ---- Retarget note ----
 # Schematic targets HIL101 but SchematicAPI.detect_hw_settings() auto-retargets
@@ -62,15 +53,16 @@ model:
     D: 10.0
     Kv: 1.0e-4
 
-  # Documentation-only -- values a pre-run hook should push into the sim.
-  # Not yet consumed by any node; see "PRE-RUN REQUIREMENT" at top of file.
-  runtime_init_required:
-    Vgrid:
-      rms: 220.0                     # LN RMS
-      frequency: 60.0
-      phase: 0.0
-    Vdc_link:
-      value: 700.0                   # DC bus; Vpeak_LN ~311 -> 2x margin
+  # Canonical grid_init block; referenced via YAML anchor by each VSM scenario
+  # below so changes here propagate uniformly.
+  grid_init_default: &grid_init_default
+    source: "Vgrid"
+    rms: 220.0                       # LN RMS
+    frequency: 60.0
+    phase: 0.0
+    dc_source: "Vdc_link"
+    dc_value: 700.0                  # DC bus; Vpeak_LN ~311 -> 2x margin
+    settle_s: 0.5
 
   # Passive network (from CODE model_init; kept as reference for scenario math)
   lcl_filter:
@@ -110,6 +102,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 0.0
       Qref_var: 0.0
       settle_s: 2.0
@@ -124,6 +117,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 5000.0
       Qref_var: 0.0
       settle_s: 3.0
@@ -138,6 +132,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 0.0
       Qref_var: 2000.0
       settle_s: 3.0
@@ -156,6 +151,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.3
       D: 10.0
       Pref_initial_w: 2000.0
@@ -173,6 +169,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.1
       D: 10.0
       Pref_initial_w: 2000.0
@@ -248,6 +245,7 @@ scenarios:
     standard_ref: "IEEE 519-2022"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 5000.0
       Qref_var: 0.0
       settle_s: 3.0
