@@ -211,10 +211,10 @@ class HILToolExecutor:
             if not path:
                 return {"error": "model_path required for load"}
             if HAS_TYPHOON:
-                # Try real hardware first; fall back to VHIL when no device
-                # is connected. VHIL still requires a real .cpd compiled by
-                # SchematicAPI but runs entirely on the host CPU.
-                use_vhil = params.get("vhil_device", True)
+                # Default target is the connected physical HIL; scenarios can
+                # opt into VHIL by passing vhil_device=True. VHIL still needs
+                # a real .cpd compiled by SchematicAPI but runs on the host.
+                use_vhil = params.get("vhil_device", False)
                 try:
                     ok = hil.load_model(
                         file=path, offlineMode=False, vhil_device=use_vhil,

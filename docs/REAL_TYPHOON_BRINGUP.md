@@ -1,16 +1,17 @@
 # Real Typhoon HIL Bring-up Notes
 
 Status of running THAA against a real Typhoon HIL Control Center installation
-(currently tested against THCC 2026.1 SP1 + VHIL).
+(currently tested against THCC 2026.1 SP1 + HIL404).
 
 ## Environment
 
 | Item | Value |
 |------|-------|
-| THCC install | `C:\Users\junpr\AppData\Local\typhoon\THCC 2026.1 SP1\` |
-| Bundled Python | `python_portables\python3_portable\python.exe` (Python 3.11.4) |
+| THCC install | `C:\abc\Typhoon HIL Control Center 2026.1 sp1\` |
+| Bundled Python | `python3_portable\python.exe` (Python 3.11.4) |
 | Typhoon API | `typhoon.api.hil`, `typhoon.test.capture`, `typhoon.api.schematic_editor` |
-| Test device | VHIL (Virtual HIL) — no physical HIL606/HIL101 connected |
+| Test device | HIL404, serial `00404-05-00190`, hw rev 1.3, build 2026-2-4 |
+| Device resources | 16 AI / 16 AO (-10..10V), 32 DI / 32 DO, 2x CAN, 64M-sample scope |
 
 ## Launcher
 
@@ -23,7 +24,9 @@ scripts\run_with_typhoon.bat python main.py --goal "..." --config configs/scenar
 ## Verified working
 
 - ✅ `typhoon.api.hil` import + signal discovery (`get_analog_signals()`, `get_scada_inputs()`)
-- ✅ Model load: `hil.load_model(file=cpd, vhil_device=True)` — VHIL fallback automatic
+- ✅ Model load: `hil.load_model(file=cpd, vhil_device=False)` targets the
+  connected HIL404 by default; pass `vhil_device=True` to force the VHIL
+  simulator instead.
 - ✅ Simulation start / stop lifecycle
 - ✅ SCADA input writes via `set_scada_input_value("P_ref"|"J"|"D"|"Kv", value=...)` —
   `_signal_write` now auto-tries SCADA first, falls back to source.
@@ -97,8 +100,10 @@ seconds.
    voltage sag detection).
 2. **Evaluator strictness** — change `_evaluate()` default from PASS to
    ERROR when no waveform stats arrive.
-3. **Real device test** — once a HIL606/HIL101 is wired, change
-   `vhil_device=True` → `False` and rerun.
+3. **Real device test** — HIL404 is wired and the code default is now
+   `vhil_device=False`. Run one scenario end-to-end against hardware and
+   confirm analog/digital I/O match expected values before trusting the
+   healing loop.
 4. **Heal loop demo** — pick one GFM scenario, intentionally mistune `J`
    to make it fail, then watch the analyze_failure → apply_fix loop
    converge.
