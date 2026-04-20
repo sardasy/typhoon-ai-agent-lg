@@ -1,7 +1,7 @@
 """
 Node: generate_report
 
-Final node — stops simulation, generates HTML report from all results.
+Final node -- stops simulation, generates HTML report from all results.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ async def generate_report(state: AgentState) -> dict[str, Any]:
 
     return {
         "report_path": report_path,
-        "events": [make_event("report", "report", f"Report: {report_path} — {summary}")],
+        "events": [make_event("report", "report", f"Report: {report_path} -- {summary}")],
     }
 
 

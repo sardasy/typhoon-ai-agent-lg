@@ -1,5 +1,5 @@
 """
-graph.py — LangGraph StateGraph definition.
+graph.py -- LangGraph StateGraph definition.
 
 This is the heart of the system. It defines:
   - Nodes (functions that transform state)

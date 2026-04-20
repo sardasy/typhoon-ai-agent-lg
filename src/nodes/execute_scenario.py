@@ -97,7 +97,7 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
     status_label = status.upper()
     msg = f"{status_label}: {name}"
     if fail_reason:
-        msg += f" — {fail_reason}"
+        msg += f" -- {fail_reason}"
 
     return {
         "current_scenario": scenario,
