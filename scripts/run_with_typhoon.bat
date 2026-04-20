@@ -25,13 +25,15 @@ if "%~1"=="" (
     exit /b 1
 )
 
-REM Replace literal "python" with the Typhoon Python; pass through everything else.
+REM Replace literal "python" with the Typhoon Python; pass through everything
+REM else. Note: in cmd.exe, `%*` is NOT affected by `shift`, so we cannot
+REM combine `shift` with `%*` to drop the first token. Instead we pass %2..%9
+REM explicitly (preserves per-arg quoting) and cap at 8 forwarded args, which
+REM covers every current call site.
 if /I "%~1"=="python" (
-    shift
-    "%TYPHOON_PY%" %*
+    "%TYPHOON_PY%" %2 %3 %4 %5 %6 %7 %8 %9
 ) else if /I "%~1"=="pytest" (
-    shift
-    "%TYPHOON_PY%" -m pytest %*
+    "%TYPHOON_PY%" -m pytest %2 %3 %4 %5 %6 %7 %8 %9
 ) else (
     "%~1" %*
 )
