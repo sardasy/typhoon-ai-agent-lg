@@ -36,7 +36,7 @@ scenarios:
   vsm_voltage_magnitude_steady_state:
     description: "Va RMS within ±5% of nominal at zero export (IEEE 2800 §9)"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 0.0
@@ -50,7 +50,7 @@ scenarios:
   vsm_active_power_tracking_low:
     description: "Pe tracks Pref=2kW within 10%"
     category: "control_performance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 2000.0
@@ -64,7 +64,7 @@ scenarios:
   vsm_active_power_tracking_med:
     description: "Pe tracks Pref=5kW within 10%"
     category: "control_performance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 5000.0
@@ -77,7 +77,7 @@ scenarios:
   vsm_active_power_tracking_high:
     description: "Pe tracks Pref=8kW within 10%"
     category: "control_performance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 8000.0
@@ -90,7 +90,7 @@ scenarios:
   vsm_voltage_holds_weak_grid:
     description: "Va must not collapse below 0.85 pu when grid drops to 0.9 pu"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "voltage_sag"
       signal_ac_sources: ["Vgrid"]
@@ -111,7 +111,7 @@ scenarios:
   vsm_inertia_low_J:
     description: "Pref step 2->8kW with J=0.1 (low inertia)"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.1
@@ -128,7 +128,7 @@ scenarios:
   vsm_inertia_med_J:
     description: "Pref step with J=0.3 (medium inertia, default)"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.3
@@ -144,7 +144,7 @@ scenarios:
   vsm_inertia_high_J:
     description: "Pref step with J=0.8 (high inertia, slowest response)"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.8
@@ -160,7 +160,7 @@ scenarios:
   vsm_rocof_bounded:
     description: "ROCOF stays under 5 Hz/s during Pref step"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.3
@@ -177,7 +177,7 @@ scenarios:
   vsm_ffci_response_50pct_sag:
     description: "FFCI activates within 20 ms during 0.5 pu sag"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.4"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "voltage_sag"
       signal_ac_sources: ["Vgrid"]
@@ -195,7 +195,7 @@ scenarios:
   vsm_ffci_response_30pct_sag:
     description: "FFCI activates within 20 ms during 0.3 pu sag (severe)"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.4"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "voltage_sag"
       signal_ac_sources: ["Vgrid"]
@@ -213,7 +213,7 @@ scenarios:
   vsm_ffci_current_capped:
     description: "FFCI current must not exceed 1.5 pu (overcurrent limit)"
     category: "protection"
-    standard_ref: "IEEE 2800-2022 Section 7.4"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "voltage_sag"
       signal_ac_sources: ["Vgrid"]
@@ -230,7 +230,7 @@ scenarios:
   vsm_ffci_sustained_300ms:
     description: "FFCI sustains >=1.0 pu reactive current for 300 ms"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.4"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "voltage_sag"
       signal_ac_sources: ["Vgrid"]
@@ -252,7 +252,7 @@ scenarios:
   vsm_droop_underfreq_small:
     description: "Pe must increase when grid f drops by 0.1 Hz"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.1"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "frequency_deviation"
       signal_ac_sources: ["Vgrid"]
@@ -269,7 +269,7 @@ scenarios:
   vsm_droop_underfreq_med:
     description: "Pe must increase significantly when grid f drops 0.5 Hz"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.1"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "frequency_deviation"
       signal_ac_sources: ["Vgrid"]
@@ -286,7 +286,7 @@ scenarios:
   vsm_droop_overfreq_small:
     description: "Pe must decrease when grid f rises by 0.1 Hz"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.1"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "frequency_deviation"
       signal_ac_sources: ["Vgrid"]
@@ -303,7 +303,7 @@ scenarios:
   vsm_droop_overfreq_med:
     description: "Pe decreases significantly when f rises 0.5 Hz"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.1"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "frequency_deviation"
       signal_ac_sources: ["Vgrid"]
@@ -320,7 +320,7 @@ scenarios:
   vsm_primary_response_time:
     description: "Pe reaches 90% of new target within 2s of f-step"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.1"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "frequency_deviation"
       signal_ac_sources: ["Vgrid"]
@@ -341,7 +341,7 @@ scenarios:
   vsm_phase_jump_10deg:
     description: "Phase jump 10°: peak current <= 1.5 pu"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.3"
+    standard_ref: "IEEE 2800-2022 Clause 7.3.2.4"
     parameters:
       fault_template: "phase_jump"
       signal_ac_sources: ["Vgrid"]
@@ -357,7 +357,7 @@ scenarios:
   vsm_phase_jump_20deg:
     description: "Phase jump 20°: still bounded current"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.3"
+    standard_ref: "IEEE 2800-2022 Clause 7.3.2.4"
     parameters:
       fault_template: "phase_jump"
       signal_ac_sources: ["Vgrid"]
@@ -373,7 +373,7 @@ scenarios:
   vsm_phase_jump_25deg:
     description: "Phase jump 25° (IEEE 2800 max): no trip, currents bounded"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 7.3"
+    standard_ref: "IEEE 2800-2022 Clause 7.3.2.4"
     parameters:
       fault_template: "phase_jump"
       signal_ac_sources: ["Vgrid"]
@@ -394,7 +394,7 @@ scenarios:
   vsm_voltage_thd_clean_grid:
     description: "Va THD <= 5% at rated power"
     category: "power_quality"
-    standard_ref: "IEEE 2800-2022 Section 7.5 / IEEE 519"
+    standard_ref: "IEEE 2800-2022 Clause 7 / IEEE 519"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 5000.0
@@ -407,7 +407,7 @@ scenarios:
   vsm_current_thd_rated:
     description: "Ia THD <= 5% at rated 5kW"
     category: "power_quality"
-    standard_ref: "IEEE 2800-2022 Section 7.5 / IEEE 519"
+    standard_ref: "IEEE 2800-2022 Clause 7 / IEEE 519"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 5000.0
