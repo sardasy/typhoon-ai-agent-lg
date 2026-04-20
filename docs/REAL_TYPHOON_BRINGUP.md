@@ -15,11 +15,29 @@ Status of running THAA against a real Typhoon HIL Control Center installation
 
 ## Launcher
 
+The bundled Typhoon Python gives us `typhoon.api.hil` but not THAA's langgraph
+/ langchain stack. The supported path is a `--system-site-packages` venv on
+top of the bundled interpreter: Typhoon's numpy/matplotlib/requests stay
+intact and THAA's extra deps are layered on.
+
 ```bash
-# All commands routed through Typhoon's bundled Python
-scripts\run_with_typhoon.bat pytest tests/
-scripts\run_with_typhoon.bat python main.py --goal "..." --config configs/scenarios_vsm_gfm.yaml
+# First-time setup (idempotent; skip the venv step if it already exists):
+scripts\setup_typhoon_venv.bat
+
+# Run tests against real hardware (2 skips are HAS_TYPHOON-guarded mocks):
+.venv_typhoon\Scripts\python.exe -m pytest tests/ -p no:typhoon -p no:allure_livecli
+
+# Run the agent:
+.venv_typhoon\Scripts\python.exe main.py --goal "..." --config configs/scenarios_vsm_gfm.yaml
 ```
+
+`-p no:typhoon -p no:allure_livecli` disables Typhoon's bundled pytest plugins
+(they auto-init HIL SCADA at collection time and bail out when a device is not
+already handshaken). THAA tests do not need them.
+
+The older `scripts\run_with_typhoon.bat` still works for ad-hoc `python ...`
+calls but does not install THAA deps; prefer `setup_typhoon_venv.bat` + the
+venv interpreter for anything that touches `src/` or `tests/`.
 
 ## Verified working
 
