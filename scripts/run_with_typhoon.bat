@@ -8,7 +8,7 @@ REM   scripts\run_with_typhoon.bat python main.py --goal "..."
 REM   scripts\run_with_typhoon.bat python main.py --server --port 8000
 REM ===========================================================================
 
-set TYPHOON_PY=C:\Users\junpr\AppData\Local\typhoon\THCC 2026.1 SP1\python_portables\python3_portable\python.exe
+set TYPHOON_PY=C:\abc\Typhoon HIL Control Center 2026.1 sp1\python3_portable\python.exe
 
 if not exist "%TYPHOON_PY%" (
     echo [ERROR] Typhoon HIL Python not found at:
