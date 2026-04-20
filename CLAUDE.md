@@ -26,7 +26,7 @@ All source files, configs, and prompts are structured for AI-assisted developmen
 - `prompts/*.md` contain agent system prompts (editable independently from code)
 - `configs/*.yaml` define test scenarios and hardware config (no code changes needed)
 - Mock mode allows full development without physical HIL hardware
-- All 160 tests pass without any external dependencies (no API key, no HIL, no XCP)
+- All 175 tests pass without any external dependencies (no API key, no HIL, no XCP)
 
 ## Architecture summary
 
@@ -48,7 +48,7 @@ The graph has 3 conditional edges: `route_after_exec`, `route_after_analysis`,
 ## Commands
 
 ```bash
-# Run tests (160 tests, should all pass — run this after every change)
+# Run tests (175 tests, should all pass — run this after every change)
 cd typhoon_ai_agent_lg && python -m pytest tests/ -v
 
 # Run a single test goal (requires ANTHROPIC_API_KEY)
@@ -68,7 +68,7 @@ When working on this project with Claude Code, follow this sequence:
 1. **Read before writing.** Always read the relevant node file and `state.py`
    before modifying any node. Understand what state fields the node reads/writes.
 2. **Run tests after every change.** `python -m pytest tests/ -v` must stay at
-   160 passed (or more if you added tests). Never commit with failing tests.
+   175 passed (or more if you added tests). Never commit with failing tests.
 3. **Add a routing test for every new conditional edge.** If you add a new branch
    in `route_after_exec`, add a test case for it in `TestRouteAfterExec`.
 4. **Mock mode first.** Develop and test with `HAS_TYPHOON=False`. Only test on

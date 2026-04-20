@@ -17,6 +17,7 @@ import yaml
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..signal_validator import attach_validation
 from ..state import AgentState, make_event
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,12 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
             len(predefined), config_path,
         )
 
+        # Pre-check: every referenced signal must exist in the loaded model.
+        # Scenarios with missing signals are still included (so they appear in
+        # the report) but carry `validation_errors` -- execute_scenario will
+        # short-circuit them to ERROR without running stimulus.
+        bad_count = attach_validation(predefined, signals)
+
         # Build standard_coverage from standard_ref fields
         std_cov: dict[str, list[str]] = {}
         for s in predefined:
@@ -91,19 +98,32 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
             if ref:
                 std_cov.setdefault(ref, []).append(s["scenario_id"])
 
+        events = [
+            make_event(
+                "plan_tests", "plan",
+                f"Loaded {len(predefined)} predefined scenarios from {config_path}",
+                {"scenario_count": len(predefined), "source": "yaml",
+                 "validation_failures": bad_count},
+            )
+        ]
+        if bad_count:
+            bad_ids = [s["scenario_id"] for s in predefined
+                       if s.get("validation_errors")]
+            events.append(make_event(
+                "plan_tests", "warning",
+                f"{bad_count} scenario(s) reference unknown signals: "
+                f"{', '.join(bad_ids[:5])}"
+                + (f" (+{bad_count-5} more)" if bad_count > 5 else ""),
+                {"invalid_scenarios": bad_ids},
+            ))
+
         return {
             "plan_strategy": f"Predefined scenarios from {config_path}",
             "scenarios": predefined,
             "scenario_index": 0,
-            "estimated_duration_s": len(predefined) * 30,
+            "estimated_duration_s": (len(predefined) - bad_count) * 30,
             "standard_coverage": std_cov,
-            "events": [
-                make_event(
-                    "plan_tests", "plan",
-                    f"Loaded {len(predefined)} predefined scenarios from {config_path}",
-                    {"scenario_count": len(predefined), "source": "yaml"},
-                )
-            ],
+            "events": events,
         }
 
     # Fallback: call Claude Planner for dynamic scenario generation
@@ -145,17 +165,34 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
     scenarios = plan_data.get("scenarios", [])
     scenarios.sort(key=lambda s: s.get("priority", 99))
 
+    # Same signal pre-check as the predefined path -- Claude hallucinates
+    # signal names occasionally, so validate before stimulus application.
+    bad_count = attach_validation(scenarios, signals)
+
+    events = [
+        make_event(
+            "plan_tests", "plan",
+            f"Plan: {len(scenarios)} scenarios, "
+            f"~{plan_data.get('estimated_duration_s', 0)}s",
+            {"scenario_count": len(scenarios),
+             "validation_failures": bad_count},
+        )
+    ]
+    if bad_count:
+        bad_ids = [s.get("scenario_id", "?") for s in scenarios
+                   if s.get("validation_errors")]
+        events.append(make_event(
+            "plan_tests", "warning",
+            f"{bad_count} Claude-planned scenario(s) reference unknown signals: "
+            f"{', '.join(bad_ids[:5])}",
+            {"invalid_scenarios": bad_ids},
+        ))
+
     return {
         "plan_strategy": plan_data.get("strategy", ""),
         "scenarios": scenarios,
         "scenario_index": 0,
         "estimated_duration_s": plan_data.get("estimated_duration_s", 0),
         "standard_coverage": plan_data.get("standard_coverage", {}),
-        "events": [
-            make_event(
-                "plan_tests", "plan",
-                f"Plan: {len(scenarios)} scenarios, ~{plan_data.get('estimated_duration_s', 0)}s",
-                {"scenario_count": len(scenarios)},
-            )
-        ],
+        "events": events,
     }

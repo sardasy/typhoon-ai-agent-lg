@@ -1,0 +1,57 @@
+# =============================================================================
+# Pre-check demo -- 2 scenarios with intentional signal typos
+# =============================================================================
+# Used to demonstrate that plan_tests catches bad signal names before any
+# stimulus runs. Pair this file with the mock HIL (default 18 signals):
+#   V_cell_1 .. V_cell_12, I_pack, V_pack, BMS_OVP_relay, BMS_UVP_relay,
+#   BMS_OCP_relay, BMS_fault_flag
+# =============================================================================
+
+model:
+  path: "models/mock_bms.tse"   # no file needed - mock discovers 18 signals
+
+scenarios:
+
+  # Should pass pre-check (all signals valid)
+  ovp_valid:
+    description: "Valid OVP scenario (should run normally)"
+    category: "protection"
+    parameters:
+      fault_template: "overvoltage"
+      signal: "V_cell_1"
+      nominal_value: 3.6
+      fault_value: 4.5
+    measurements:
+      - "V_cell_1"
+      - "BMS_OVP_relay"
+    pass_fail_rules:
+      relay_must_trip: true
+
+  # Should fail pre-check -- typo in measurement + stimulus signal
+  ovp_typo:
+    description: "OVP with typo'd signal names"
+    category: "protection"
+    parameters:
+      fault_template: "overvoltage"
+      signal: "V_cellTypo_1"       # should be V_cell_1
+      nominal_value: 3.6
+      fault_value: 4.5
+    measurements:
+      - "V_cell_1"
+      - "BMSS_OVP_relay"            # extra 'S'
+    pass_fail_rules:
+      relay_must_trip: true
+
+  # Should fail pre-check -- completely fictional signal
+  ovp_hallucinated:
+    description: "References a signal the model does not expose"
+    category: "protection"
+    parameters:
+      fault_template: "overvoltage"
+      signal: "SomeMadeUpBattery"
+      nominal_value: 3.6
+      fault_value: 4.5
+    measurements:
+      - "AlsoFake_relay"
+    pass_fail_rules:
+      relay_must_trip: true

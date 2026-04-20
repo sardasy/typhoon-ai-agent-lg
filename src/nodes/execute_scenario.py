@@ -37,6 +37,29 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
     measurements = scenario.get("measurements", [])
     rules = scenario.get("pass_fail_rules", {})
 
+    # Pre-check: refuse to run scenarios whose signals aren't in the model.
+    # plan_tests attached `validation_errors`; short-circuit to ERROR so we
+    # don't waste stimulus / capture time on a guaranteed failure.
+    pre_errors = scenario.get("validation_errors") or []
+    if pre_errors:
+        reason = "pre-check: " + "; ".join(pre_errors[:3])
+        if len(pre_errors) > 3:
+            reason += f" (+{len(pre_errors) - 3} more)"
+        result = ScenarioResult(
+            scenario_id=sid, status="error",
+            duration_s=0.0, waveform_stats=[],
+            fail_reason=reason,
+            retry_count=state.get("heal_retry_count", 0),
+        )
+        return {
+            "current_scenario": scenario,
+            "results": [result.model_dump()],
+            "diagnosis": None,
+            "events": [make_event("execute", "error",
+                                   f"SKIP {sid}: {reason}",
+                                   result.model_dump())],
+        }
+
     hil = get_hil()
     t0 = time.time()
 
