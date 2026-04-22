@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -42,6 +43,31 @@ class CodegenRequest(BaseModel):
     tse_content: str
     tse_path: str = "uploaded.tse"
     mode: str = "mock"
+
+
+# ---------------------------------------------------------------------------
+# Walltime cap helper
+# ---------------------------------------------------------------------------
+
+def _parse_max_runtime(cli_value: float | None, env_value: str | None) -> float | None:
+    """Resolve the walltime cap from CLI flag, then env THAA_MAX_RUNTIME_S.
+
+    Returns None (no cap) when both are unset or the env value is malformed.
+    Values <= 0 also resolve to None so "0" means "off", matching GNU `timeout`.
+    """
+    if cli_value is not None:
+        return cli_value if cli_value > 0 else None
+    if env_value:
+        try:
+            parsed = float(env_value)
+        except ValueError:
+            print(
+                f"WARNING: invalid THAA_MAX_RUNTIME_S={env_value!r}, ignoring",
+                file=sys.stderr,
+            )
+            return None
+        return parsed if parsed > 0 else None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +119,7 @@ async def run_cli(
     hitl: bool = False,
     checkpoint_db: str | None = None,
     resume_thread: str | None = None,
+    max_runtime_s: float | None = None,
 ):
     """Stream graph execution to terminal.
 
@@ -104,11 +131,21 @@ async def run_cli(
     ``checkpoint_db`` enables persistent state via SqliteSaver. When
     ``resume_thread`` is supplied, the agent resumes an existing paused
     thread (typically after a crash / restart) instead of starting a new run.
+
+    ``max_runtime_s`` bounds total walltime. The check runs between astream
+    yields (node boundaries), so the current node always finishes cleanly
+    before the run is stopped. Raises ``TimeoutError`` when the cap fires.
     """
     try:
-        import io, sys as _sys
         from rich.console import Console
-        console = Console(file=io.TextIOWrapper(_sys.stdout.buffer, encoding="utf-8", errors="replace"))
+        # Reconfigure stdout encoding in place rather than wrapping with a fresh
+        # TextIOWrapper — a wrapper would close the underlying FD on GC and
+        # break downstream writers (and pytest capture in tests).
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+        console = Console()
         HAS_RICH = True
     except ImportError:
         HAS_RICH = False
@@ -158,6 +195,8 @@ async def run_cli(
 
     prev_event_count = 0
     input_value = initial
+    deadline = time.monotonic() + max_runtime_s if max_runtime_s else None
+    timed_out = False
 
     try:
         while True:
@@ -175,7 +214,12 @@ async def run_cli(
                     for ev in events[prev_event_count:]:
                         _print_event(ev, console, HAS_RICH)
                     prev_event_count = 0
+                if deadline is not None and time.monotonic() >= deadline:
+                    timed_out = True
+                    break
 
+            if timed_out:
+                break
             if not hitl_active:
                 break
 
@@ -221,6 +265,14 @@ async def run_cli(
                     await close_result
                 except Exception:
                     pass
+
+    if timed_out:
+        msg = f"Walltime cap {max_runtime_s:g}s exceeded; stopping run."
+        if HAS_RICH:
+            console.print(f"[red]{msg}[/red]")
+        else:
+            print(msg, file=sys.stderr)
+        raise TimeoutError(msg)
 
     if HAS_RICH:
         console.print("\n[dim]Done.[/dim]\n")
@@ -708,6 +760,10 @@ def main():
                         help="Resume an existing paused thread by ID (requires --checkpoint-db)")
     parser.add_argument("--list-threads", action="store_true",
                         help="List all thread IDs in the checkpoint DB and exit")
+    parser.add_argument("--max-runtime-s", type=float, default=None,
+                        help="Walltime cap in seconds (CI safety). "
+                             "Run exits with code 124 when exceeded. "
+                             "Env fallback: THAA_MAX_RUNTIME_S.")
     args = parser.parse_args()
 
     if args.list_threads:
@@ -720,13 +776,21 @@ def main():
     if args.server:
         run_server(args.config, args.host, args.port)
     elif args.resume_thread or args.goal:
-        asyncio.run(run_cli(
-            args.goal or "",
-            args.config,
-            hitl=args.hitl,
-            checkpoint_db=args.checkpoint_db,
-            resume_thread=args.resume_thread,
-        ))
+        max_runtime_s = _parse_max_runtime(
+            args.max_runtime_s,
+            os.environ.get("THAA_MAX_RUNTIME_S"),
+        )
+        try:
+            asyncio.run(run_cli(
+                args.goal or "",
+                args.config,
+                hitl=args.hitl,
+                checkpoint_db=args.checkpoint_db,
+                resume_thread=args.resume_thread,
+                max_runtime_s=max_runtime_s,
+            ))
+        except TimeoutError:
+            sys.exit(124)
     else:
         parser.print_help()
         sys.exit(1)
