@@ -10,11 +10,19 @@ setlocal
 set REPO=%~dp0..
 set PY=python
 
-echo == 1/2: pytest --cov ==
-%PY% -m pytest --cov --cov-report=term-missing -q
+echo == 1/2: pytest --cov + Allure ==
+%PY% -m pytest --cov --cov-report=term-missing ^
+    --alluredir=reports/allure_results -q
 if errorlevel 1 (
     echo ^>^>^> Tests or coverage gate failed. ^<^<^<
     exit /b 1
+)
+
+REM Allure HTML is optional -- only generate when the CLI is on PATH.
+where allure >nul 2>nul
+if not errorlevel 1 (
+    echo Allure CLI detected: regenerating reports/allure_html
+    allure generate reports/allure_results -o reports/allure_html --clean
 )
 
 echo.

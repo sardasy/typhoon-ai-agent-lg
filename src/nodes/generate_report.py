@@ -54,9 +54,32 @@ async def generate_report(state: AgentState) -> dict[str, Any]:
 
     summary = f"Total: {total}, Passed: {passed}, Failed: {failed}, Rate: {context['pass_rate']}%"
 
+    # Optional Allure adapter -- emits one *-result.json per scenario
+    # into ``THAA_ALLURE_DIR`` so agent runs surface in the same
+    # ``allure generate`` report as the pytest suite.
+    import os as _os
+    allure_dir = _os.environ.get("THAA_ALLURE_DIR")
+    extra_events: list = []
+    if allure_dir:
+        from ..allure_reporter import write_allure_results
+        n = write_allure_results(
+            scenarios=state.get("scenarios", []),
+            results=results,
+            output_dir=allure_dir,
+            suite=state.get("goal") or "THAA agent run",
+        )
+        extra_events.append(make_event(
+            "report", "observation",
+            f"Allure: wrote {n} result file(s) to {allure_dir}",
+            {"allure_dir": allure_dir, "result_count": n},
+        ))
+
     return {
         "report_path": report_path,
-        "events": [make_event("report", "report", f"Report: {report_path} — {summary}")],
+        "events": [
+            make_event("report", "report", f"Report: {report_path} — {summary}"),
+            *extra_events,
+        ],
     }
 
 

@@ -53,7 +53,23 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(gh pr *)"
+      "Bash(gh pr *)",
+      "Bash(scripts/run_with_typhoon.bat python *)",
+      "Bash(\"/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe\" -c \"import typhoon.api.hil as h; print\\('VHIL ready'\\); print\\('analog count:', len\\(h.get_analog_signals\\(\\) or []\\)\\)\")",
+      "Bash('/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe' -c ' *)",
+      "Bash(\"/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe\" -m pip install -r requirements.txt)",
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 \"/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe\" -X utf8 -m pip install -r requirements.txt)",
+      "Bash('/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe' -X utf8 main.py --goal 'VSM IEEE 2800 smoke \\(VHIL\\)' --config /tmp/vsm_smoke2.yaml --orchestrator --twin)",
+      "Bash(allure --version)",
+      "Bash('/c/Program Files/Typhoon HIL Control Center 2026.1 sp1/python3_portable/python.exe' -X utf8 -m pytest test_project_vsm_gfm/tests/ --alluredir=reports/allure_results -v --tb=short --no-header)",
+      "Bash(allure generate *)",
+      "Bash(allure open *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8765)",
+      "Bash(awk '/test_/ {sub\\(/::.*/,\"\",$0\\); count[$1]++} END {for \\(k in count\\) print count[k], k}')",
+      "Bash(sort -t' ' -k4 -n)",
+      "Bash(sort -t'%' -k1 -n -r)",
+      "Bash(awk -F'%' '{print $1}')",
+      "Bash(awk '{print $NF, $1}')"
     ]
   }
 }

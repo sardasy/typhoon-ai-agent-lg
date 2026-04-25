@@ -26,3 +26,12 @@ runs/
 
 # pytest cache
 .pytest_cache/
+
+# Allure artifacts (regeneratable)
+reports/allure_results/
+reports/allure_html/
+allure-html/
+open_allure_results.cmd
+
+# User-specific model copies
+models_user/

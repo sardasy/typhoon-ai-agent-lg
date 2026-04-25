@@ -93,9 +93,38 @@ Then `python -m mypy src/your_module.py` until clean.
   run: |
     pip install -r requirements.txt
     pip install pytest-cov mypy types-PyYAML
-    python -m pytest --cov  # fails below 60%
+    python -m pytest --cov --alluredir=reports/allure_results  # fails below 60%
     python -m mypy
+- name: Publish Allure report
+  if: always()
+  uses: simple-elf/allure-report-action@v1
+  with:
+    allure_results: reports/allure_results
+    allure_history: gh-pages
 ```
+
+## Allure reporting
+
+The pytest suite emits Allure-compatible results via ``allure-pytest``;
+**agent runs** also emit results when the env var ``THAA_ALLURE_DIR``
+is set (see ``src/allure_reporter.py``):
+
+```bash
+# Pytest path (already integrated via scripts/check.bat):
+python -m pytest tests/ --alluredir=reports/allure_results
+
+# Agent path (one *-result.json per scenario in state.results[]):
+THAA_ALLURE_DIR=reports/allure_results python main.py \
+  --goal "..." --config configs/scenarios_vsm_gfm.yaml --orchestrator
+
+# Generate the HTML report (merges both sources):
+allure generate reports/allure_results -o reports/allure_html --clean
+allure open reports/allure_html --port 8765
+```
+
+The agent records carry domain / standard_ref / scenario parameters
+as Allure labels so the report's *Behaviors* tree groups by epic
+(``THAA verification``) → feature (run goal) → story (scenario).
 
 ## Inner loop
 

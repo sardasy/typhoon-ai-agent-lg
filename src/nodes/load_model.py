@@ -145,8 +145,16 @@ async def load_model(state: AgentState) -> dict[str, Any]:
             ))
 
     # Load model via the configured DUT backend (default: HIL).
+    # ``model.vhil`` in the YAML (or ``THAA_VHIL=1`` env) forces the
+    # Typhoon API to load against the Virtual HIL simulator instead of
+    # a connected physical device.
+    import os as _os
+    vhil_flag = bool(model_cfg.get("vhil", False)) or \
+        _os.environ.get("THAA_VHIL", "").lower() in ("1", "true", "yes")
     dut = get_dut(state)
-    result = await dut.control("load", model_path=model_path)
+    result = await dut.control(
+        "load", model_path=model_path, vhil_device=vhil_flag,
+    )
     signals = result.get("signals", [])
 
     # Start simulation (no-op for XCP-only backends).
