@@ -11,3 +11,18 @@ chroma_db/
 reports/
 output/
 uploads/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Runtime: SQLite checkpoints, HITL audit JSONL
+runs/
+
+# mypy cache
+.mypy_cache/
+
+# pytest cache
+.pytest_cache/

@@ -1,0 +1,45 @@
+[run]
+source = src, scripts
+branch = True
+parallel = False
+omit =
+    # External entry points have argparse boilerplate that's exercised
+    # by manual smoke runs, not unit tests.
+    main.py
+    # The schematic builder pulls in Typhoon HIL libs that aren't on
+    # the dev box; coverage on it is misleading.
+    src/tools/hil_api_docs.py
+    src/nodes/parse_tse.py
+    src/nodes/generate_tests.py
+    src/nodes/export_tests.py
+    src/nodes/validate_code.py
+    src/nodes/map_requirements.py
+    src/graph_codegen.py
+    # Frontend / one-shot scripts
+    frontend/*
+    scripts/demo_sqlite_resume.py
+    scripts/index_knowledge.py
+    scripts/run_with_typhoon.bat
+    scripts/run_smoke_real.bat
+
+[report]
+# Coverage gate: drop below this and ``pytest --cov`` fails. Tuned to
+# the current baseline (63%) with a small floor below it so genuine
+# regressions are caught without flapping over normal churn.
+fail_under = 60
+# Show files with at least one uncovered line, ranked by coverage.
+skip_empty = True
+show_missing = True
+precision = 1
+exclude_lines =
+    # Standard pragma
+    pragma: no cover
+    # Defensive guards we don't exercise in tests
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    # Type-checking-only branches
+    if TYPE_CHECKING:
+    \.\.\.
+
+[html]
+directory = htmlcov

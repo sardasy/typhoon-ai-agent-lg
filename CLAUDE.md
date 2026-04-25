@@ -26,7 +26,7 @@ All source files, configs, and prompts are structured for AI-assisted developmen
 - `prompts/*.md` contain agent system prompts (editable independently from code)
 - `configs/*.yaml` define test scenarios and hardware config (no code changes needed)
 - Mock mode allows full development without physical HIL hardware
-- All 182 tests pass without any external dependencies (no API key, no HIL, no XCP)
+- All 381 tests pass without any external dependencies (no API key, no HIL, no XCP)
 
 ## Architecture summary
 
@@ -48,7 +48,7 @@ The graph has 3 conditional edges: `route_after_exec`, `route_after_analysis`,
 ## Commands
 
 ```bash
-# Run tests (182 tests, should all pass — run this after every change)
+# Run tests (381 tests, should all pass — run this after every change)
 cd typhoon_ai_agent_lg && python -m pytest tests/ -v
 
 # Run a single test goal (requires ANTHROPIC_API_KEY)
@@ -57,9 +57,14 @@ python main.py --goal "BMS overvoltage protection, 4.2V, 100ms"
 # Launch web dashboard
 python main.py --server --port 8000
 
-# Type check
-python -m mypy src/ --ignore-missing-imports
+# Type check (uses mypy.ini)
+python -m mypy
+
+# One-shot quality gate (pytest --cov + mypy)
+scripts\check.bat
 ```
+
+See `docs/QUALITY.md` for the coverage / mypy strictness policy.
 
 ### Claude Code workflow
 
@@ -68,7 +73,7 @@ When working on this project with Claude Code, follow this sequence:
 1. **Read before writing.** Always read the relevant node file and `state.py`
    before modifying any node. Understand what state fields the node reads/writes.
 2. **Run tests after every change.** `python -m pytest tests/ -v` must stay at
-   182 passed (or more if you added tests). Never commit with failing tests.
+   381 passed (or more if you added tests). Never commit with failing tests.
 3. **Add a routing test for every new conditional edge.** If you add a new branch
    in `route_after_exec`, add a test case for it in `TestRouteAfterExec`.
 4. **Mock mode first.** Develop and test with `HAS_TYPHOON=False`. Only test on
@@ -190,14 +195,22 @@ config has no `scenarios:` section.
 | File | Owns | Depends on |
 |------|------|------------|
 | `state.py` | AgentState TypedDict, Pydantic models, make_event() | nothing |
-| `graph.py` | StateGraph topology, conditional edge functions, MAX_HEAL_RETRIES | state, all nodes |
+| `graph.py` | Single-agent StateGraph topology, conditional edge functions, MAX_HEAL_RETRIES | state, all nodes |
+| `graph_orchestrator.py` | Phase 4-B/D/F multi-agent StateGraph + per-domain marker nodes + parallel fan-out | graph, domain_classifier, parallel_agents |
+| `parallel_agents.py` | Phase 4-F per-domain async workers (Send-driven) | nodes/* |
+| `domain_classifier.py` | Heuristic scenario domain classifier + per-agent prompt overlays | nothing |
+| `twin.py` | Phase 4-C digital twin: calibration mirror + what-if predictor | nothing |
+| `nodes/simulate_fix.py` | Twin-gated apply_fix vetoer (opt-in via `--twin`) | twin |
+| `audit.py` | HITL approval audit trail (JSONL, regulator-grade) | nothing |
+| `constants.py` | Project-wide constants (heal retries, domain labels, action types) | nothing |
 | `nodes/load_model.py` | HIL model loading, signal discovery, RAG context fetch | tools/hil, tools/rag |
 | `nodes/plan_tests.py` | Claude Planner call, JSON plan parsing | langchain-anthropic |
-| `nodes/execute_scenario.py` | Stimulus application, waveform capture, pass/fail evaluation | tools/hil |
+| `nodes/execute_scenario.py` | Stimulus application, waveform capture, pass/fail evaluation | tools/dut |
 | `nodes/analyze_failure.py` | Claude Analyzer call, diagnosis JSON parsing | langchain-anthropic |
-| `nodes/apply_fix.py` | XCP calibration write, safety validation | tools/xcp, validator |
+| `nodes/apply_fix.py` | XCP calibration write, safety validation | tools/dut, validator |
 | `nodes/advance_scenario.py` | scenario_index increment, state cleanup | nothing |
 | `nodes/generate_report.py` | Simulation stop, Jinja2 HTML rendering | tools/hil, reporter |
+| `tools/dut/` | DUT abstraction (HIL/XCP/Hybrid/Mock backends, Phase 4) | tools/hil, tools/xcp |
 | `tools/hil_tools.py` | Typhoon HIL API wrapper (5 tools) | typhoon.api.hil (optional) |
 | `tools/xcp_tools.py` | pyXCP wrapper + writable param whitelist | pyxcp (optional) |
 | `tools/rag_tools.py` | Qdrant vector search + mock KB | qdrant-client (optional) |
@@ -325,7 +338,66 @@ with the node name and model ID for filtering.
 - **Phase 3 (planned):** RAG knowledge base population (IEC/UL standards, API docs,
   past test history), multi-device support, LangSmith tracing, PostgreSQL
   checkpointer for crash recovery.
-- **Phase 4 (future):** Multi-agent subgraphs (BMS Agent, PCS Agent, Grid Agent
-  as separate StateGraphs coordinated by an orchestrator), human-in-the-loop
-  breakpoints for safety-critical decisions, digital twin integration,
-  DUT abstraction (same test code for HIL model and real ECU via pyXCP).
+- **Phase 4-A:** DUT abstraction MVP. `execute_scenario` and
+  `apply_fix` route through `DUTBackend` (`src/tools/dut/`) — HIL,
+  XCP, Hybrid, Mock backends selectable via `--dut-backend` /
+  `state["dut_backend"]`. Same scenario YAML runs against HIL model or
+  real ECU. See `docs/DUT_ABSTRACTION.md`.
+- **Phase 4-B:** Multi-agent orchestration. Scenarios are
+  auto-classified into BMS / PCS / Grid / General domains by
+  `src/domain_classifier.py`; `src/graph_orchestrator.py` builds a
+  StateGraph with per-domain marker nodes and a per-agent analyzer
+  prompt overlay. Activated with `--orchestrator`. See
+  `docs/MULTI_AGENT.md`.
+- **Phase 4-C:** Digital twin MVP. `src/twin.py` mirrors
+  the ECU's calibration state and gates `apply_fix` via a
+  `simulate_fix` node — vetoes no-op / out-of-range /
+  wrong-direction writes before they hit hardware. Activated with
+  `--twin` (composes with `--orchestrator`). See
+  `docs/DIGITAL_TWIN.md`.
+- **Phase 4-D:** Orchestrator now supports `--hitl` +
+  `--checkpoint-db` (sync `SqliteSaver` and async `AsyncSqliteSaver`)
+  via `compile_orchestrator_graph` / `acompile_orchestrator_graph` —
+  mirrors the single-agent pair. Multi-agent runs can pause before
+  `apply_fix` and resume after process restart, same UX as
+  Phase 3 HITL.
+- **Phase 4-E:** `XCPBackend.capture()` now performs
+  pyxcp DAQ-based waveform capture (real path) with a mock fallback
+  that mirrors HIL mock's heal-target convergence. `--dut-backend xcp`
+  self-heal demos converge without an ECU. See `docs/DUT_ABSTRACTION.md`.
+- **Phase 4-F:** Parallel domain agents via LangGraph
+  `Send`. `compile_parallel_orchestrator_graph()` fans out non-empty
+  domains to concurrent async workers (`src/parallel_agents.py`);
+  each worker runs the full heal loop on its scenario subset.
+  Hardware contention serialized by
+  `src/tools/dut/base.py::HARDWARE_LOCK` (asyncio.Lock); Claude
+  analyzer calls overlap. Activated with `--orchestrator --parallel`.
+  See `docs/MULTI_AGENT.md`.
+- **Phase 4-G:** Per-domain RAG namespaces. The RAG tool
+  accepts an optional `domain` filter (Chroma `where`, Qdrant
+  payload predicate, mock metadata vote); the indexer tags every
+  document via `infer_doc_domain` heuristic. `load_model` populates
+  `state["rag_context_by_domain"]` with one bucket per domain;
+  `analyze_failure` reads the matching bucket per scenario. Always
+  includes `general` as a catch-all. See `docs/RAG_INDEXING.md`.
+- **Phase 4-H:** Real HIL404 + real ECU bring-up
+  tooling: `scripts/preflight.py` (env / config / HIL / XCP / RAG /
+  twin checks), `--preflight` / `--preflight-strict` CLI flags,
+  `scripts/run_smoke_real.bat`, expanded `docs/REAL_TYPHOON_BRINGUP.md`
+  with 7-step bring-up checklist + Phase 4 ramp recommendations +
+  troubleshooting matrix.
+- **Phase 4-I (current, stable):** Multi-device HIL. Per-device backend
+  cache + per-device `asyncio.Lock` (`get_hardware_lock(device_id)`).
+  Scenarios opt in via a YAML `device_id` field;
+  `state["device_pool"]` carries per-device config overlays. Same
+  device serializes; different devices overlap. Backward-compatible
+  via `"default"` device id. See `docs/REAL_TYPHOON_BRINGUP.md` and
+  `docs/DUT_ABSTRACTION.md`.
+- **Phase 4-J:** HITL inside the parallel orchestrator. Parallel
+  workers run in **defer-heals mode** when `state["hitl_active"]`:
+  diagnose via Claude in parallel, append `(scenario, diagnosis)` to
+  `pending_fixes` (operator.add reducer). Parent's serial replay loop
+  (`next_pending_fix` -> interrupt-before `approve_fix` -> `apply_fix`
+  -> `execute_scenario` -> route_has_pending) drains the queue with
+  per-fix operator approval. SQLite checkpointing supported via
+  `acompile_parallel_orchestrator_graph`. See `docs/MULTI_AGENT.md`.

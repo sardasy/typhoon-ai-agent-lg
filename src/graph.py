@@ -46,6 +46,11 @@ from typing import Literal
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from .constants import (
+    ACTION_XCP_CALIBRATION,
+    ANALYZER_RETRY_MIN_CONFIDENCE,
+    MAX_HEAL_RETRIES as _MAX_HEAL_RETRIES,
+)
 from .state import AgentState
 
 # Import node functions
@@ -56,13 +61,18 @@ from .nodes.analyze_failure import analyze_failure
 from .nodes.apply_fix import apply_fix
 from .nodes.advance_scenario import advance_scenario
 from .nodes.generate_report import generate_report
+from .nodes.simulate_fix import simulate_fix
 
 
 # ---------------------------------------------------------------------------
 # Conditional edge functions
 # ---------------------------------------------------------------------------
 
-MAX_HEAL_RETRIES = 3
+# Re-export from src.constants so existing ``from src.graph import
+# MAX_HEAL_RETRIES`` callers (graph_orchestrator, parallel_agents,
+# tests) keep working without churn. Single source of truth lives in
+# src.constants.
+MAX_HEAL_RETRIES = _MAX_HEAL_RETRIES
 
 
 def route_after_exec(state: AgentState) -> Literal["fail", "next", "done"]:
@@ -106,10 +116,11 @@ def route_after_analysis(
     confidence = diagnosis.get("confidence", 0)
     retries = state.get("heal_retry_count", 0)
 
-    # Retry if: fixable action + confidence > 0.5 + retries left
+    # Retry if: fixable action + confidence over threshold + retries left.
+    # Thresholds live in src.constants.
     if (
-        action_type == "xcp_calibration"
-        and confidence >= 0.5
+        action_type == ACTION_XCP_CALIBRATION
+        and confidence >= ANALYZER_RETRY_MIN_CONFIDENCE
         and retries < MAX_HEAL_RETRIES
     ):
         return "retry"
@@ -124,12 +135,80 @@ def route_has_more(state: AgentState) -> Literal["yes", "no"]:
     return "yes" if idx < total else "no"
 
 
+def route_after_simulation(state: AgentState) -> Literal["commit", "veto"]:
+    """After simulate_fix (Phase 4-C): does the twin allow apply_fix?
+
+    Verdicts ``commit`` and ``uncertain`` both proceed to apply_fix. Only
+    ``veto`` skips the write and escalates this scenario.
+    """
+    pred = state.get("twin_prediction") or {}
+    return "veto" if pred.get("verdict") == "veto" else "commit"
+
+
+# ---------------------------------------------------------------------------
+# Heal-loop wiring (shared between build_graph and build_orchestrator_graph)
+# ---------------------------------------------------------------------------
+
+def wire_heal_edges(
+    graph: StateGraph,
+    *,
+    twin: bool,
+    on_escalate: str = "advance_scenario",
+    on_commit: str = "apply_fix",
+) -> None:
+    """Add the analyze -> (simulate_fix?) -> apply_fix / escalate edges.
+
+    Centralises the ``if twin:`` branching that used to live in
+    ``build_graph`` and ``build_orchestrator_graph`` (separately, with
+    the same body). Caller still owns ``add_node("analyze_failure",...)``,
+    ``add_node("apply_fix",...)``, ``add_node("advance_scenario",...)``
+    and (when ``twin``) ``add_node("simulate_fix", simulate_fix)`` --
+    only the conditional-edge wiring is shared here.
+
+    Parameters
+    ----------
+    twin
+        When True, wire ``analyze_failure -> simulate_fix ->
+        {commit: apply_fix, veto: on_escalate}``. When False, wire
+        ``analyze_failure -> {retry: apply_fix, escalate: on_escalate}``.
+    on_escalate
+        Node to route to when the analyzer says escalate (or the twin
+        vetoes). Both single-graph and orchestrator use ``advance_scenario``.
+    on_commit
+        Node to route to when the fix is approved. Both graphs use
+        ``apply_fix`` -- exposed as a kwarg for symmetry.
+    """
+    if twin:
+        graph.add_conditional_edges(
+            "analyze_failure",
+            route_after_analysis,
+            {"retry": "simulate_fix", "escalate": on_escalate},
+        )
+        graph.add_conditional_edges(
+            "simulate_fix",
+            route_after_simulation,
+            {"commit": on_commit, "veto": on_escalate},
+        )
+    else:
+        graph.add_conditional_edges(
+            "analyze_failure",
+            route_after_analysis,
+            {"retry": on_commit, "escalate": on_escalate},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Build the graph
 # ---------------------------------------------------------------------------
 
-def build_graph() -> StateGraph:
-    """Construct and return the compiled LangGraph StateGraph."""
+def build_graph(*, twin: bool = False) -> StateGraph:
+    """Construct and return the LangGraph StateGraph (uncompiled).
+
+    When ``twin=True`` (Phase 4-C), inserts ``simulate_fix`` between
+    ``analyze_failure`` and ``apply_fix``. The twin can veto a fix
+    (no-op / out-of-range / wrong-direction), in which case the graph
+    routes to ``advance_scenario`` instead of writing to the ECU.
+    """
 
     graph = StateGraph(AgentState)
 
@@ -141,6 +220,8 @@ def build_graph() -> StateGraph:
     graph.add_node("apply_fix", apply_fix)
     graph.add_node("advance_scenario", advance_scenario)
     graph.add_node("generate_report", generate_report)
+    if twin:
+        graph.add_node("simulate_fix", simulate_fix)
 
     # --- Set entry point ---
     graph.set_entry_point("load_model")
@@ -163,15 +244,10 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # After analysis: retry / escalate
-    graph.add_conditional_edges(
-        "analyze_failure",
-        route_after_analysis,
-        {
-            "retry": "apply_fix",
-            "escalate": "advance_scenario",
-        },
-    )
+    # After analysis: retry / escalate (with optional twin gate).
+    # Shared wiring lives in :func:`wire_heal_edges` so the orchestrator
+    # graph uses the same logic.
+    wire_heal_edges(graph, twin=twin)
 
     # After advancing: more scenarios? or report
     graph.add_conditional_edges(
@@ -266,6 +342,7 @@ def compile_graph(
     interrupt_nodes: tuple[str, ...] = ("apply_fix",),
     checkpointer=None,
     checkpoint_db: str | None = None,
+    twin: bool = False,
 ):
     """Build and compile the graph synchronously.
 
@@ -301,7 +378,7 @@ def compile_graph(
     if checkpointer is None and checkpoint_db:
         checkpointer = make_sqlite_checkpointer(checkpoint_db)
 
-    graph = build_graph()
+    graph = build_graph(twin=twin)
     return graph.compile(**_build_compile_kwargs(hitl, interrupt_nodes, checkpointer))
 
 
@@ -311,6 +388,7 @@ async def acompile_graph(
     interrupt_nodes: tuple[str, ...] = ("apply_fix",),
     checkpointer=None,
     checkpoint_db: str | None = None,
+    twin: bool = False,
 ):
     """Build and compile the graph, awaiting the async SQLite connection.
 
@@ -330,5 +408,5 @@ async def acompile_graph(
     if checkpointer is None and checkpoint_db:
         checkpointer = await _open_async_sqlite_saver(checkpoint_db)
 
-    graph = build_graph()
+    graph = build_graph(twin=twin)
     return graph.compile(**_build_compile_kwargs(hitl, interrupt_nodes, checkpointer))

@@ -39,7 +39,18 @@
       "Bash(timeout 60 'C:/Users/junpr/AppData/Local/typhoon/THCC 2026.1 SP1/python_portables/python3_portable/python.exe' -u -c ' *)",
       "Bash(powershell -Command 'Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.StartTime -gt \\(Get-Date\\).AddMinutes\\(-5\\)} | Stop-Process -Force')",
       "Bash(rm -rf runs)",
-      "Bash(mkdir -p runs)"
+      "Bash(mkdir -p runs)",
+      "Bash(ls demos *)",
+      "Bash(ls examples *)",
+      "Bash(ls docs *)",
+      "Bash(git stash *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/api/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
+      "Bash(find src *)",
+      "Bash(xargs cat *)",
+      "Bash(find /c/Users/junpr/hilagent/typhoon_ai_agent_lg/.claude/worktrees/eager-aryabhata-3a407d/tests -name \"test_*.py\" -exec wc -l {} +)",
+      "Bash(xargs -I{} bash -c 'echo \"$\\(basename {}\\): $\\(grep -cE \"^[[:space:]]*\\(def test_|async def test_\\)\" {}\\)\"')",
+      "Bash(git add *)"
     ]
   }
 }

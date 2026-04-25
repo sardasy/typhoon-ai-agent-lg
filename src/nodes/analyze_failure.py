@@ -15,6 +15,7 @@ from typing import Any
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..domain_classifier import overlay_for
 from ..state import AgentState, DiagnosisResult, make_event
 
 logger = logging.getLogger(__name__)
@@ -34,17 +35,24 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
     # The last result is the failed one
     failed_result = results[-1]
 
-    # Load analyzer prompt
-    system_prompt = ANALYZER_PROMPT_PATH.read_text(encoding="utf-8")
+    # Load analyzer prompt + Phase 4-B domain overlay (BMS / PCS / Grid).
+    base_prompt = ANALYZER_PROMPT_PATH.read_text(encoding="utf-8")
+    domain = scenario.get("domain") or state.get("current_domain") or "general"
+    overlay = overlay_for(domain)
+    system_prompt = f"{base_prompt}\n\n{overlay}".rstrip() if overlay else base_prompt
 
     # Build context
     user_msg = (
         f"## Failed scenario\n{json.dumps(scenario, indent=2, ensure_ascii=False)}\n\n"
         f"## Test result\n{json.dumps(failed_result, indent=2, ensure_ascii=False)}\n\n"
     )
-    rag_ctx = state.get("rag_context", "")
+    # Phase 4-G: prefer the failed scenario's domain namespace when
+    # available; fall back to the global pull.
+    by_domain = state.get("rag_context_by_domain") or {}
+    rag_ctx = by_domain.get(domain) or state.get("rag_context", "")
     if rag_ctx:
-        user_msg += f"## Past test history / standards\n{rag_ctx}\n"
+        domain_tag = f" ({domain})" if by_domain.get(domain) else ""
+        user_msg += f"## Past test history / standards{domain_tag}\n{rag_ctx}\n"
 
     # Call Claude
     llm = ChatAnthropic(
@@ -52,12 +60,13 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
         temperature=0,
         max_tokens=4096,
     ).with_config(
-        tags=["analyze_failure", "claude-sonnet-4"],
+        tags=["analyze_failure", "claude-sonnet-4", f"agent:{domain}"],
         metadata={
             "node": "analyze_failure",
             "scenario_id": scenario.get("scenario_id", ""),
+            "domain": domain,
         },
-        run_name="analyze_failure.llm",
+        run_name=f"analyze_failure.{domain}.llm",
     )
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),
@@ -100,8 +109,8 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
         "events": [
             make_event(
                 "analyze", "diagnosis",
-                f"Root cause: {desc} (confidence={conf:.0%})",
-                diagnosis,
+                f"[{domain}_agent] Root cause: {desc} (confidence={conf:.0%})",
+                {**diagnosis, "domain": domain},
             )
         ],
     }

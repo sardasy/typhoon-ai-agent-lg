@@ -14,7 +14,7 @@ from typing import Any
 from ..evaluator import evaluate as evaluate_rules
 from ..fault_templates import get_template, validate_params
 from ..state import AgentState, ScenarioResult, WaveformStats, make_event
-from .load_model import get_hil
+from .load_model import get_dut
 
 logger = logging.getLogger(__name__)
 
@@ -60,33 +60,34 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
                                    result.model_dump())],
         }
 
-    hil = get_hil()
+    # Phase 4-I: per-scenario device routing. Scenarios with no
+    # ``device_id`` field hit the same default backend as before.
+    dut = get_dut(state, scenario=scenario)
     t0 = time.time()
 
     try:
         # 1. Apply stimulus
-        await _apply_stimulus(hil, params)
+        await _apply_stimulus(dut, params)
 
         # 2. Capture waveforms
         duration = max(
             params.get("ramp_duration_s", 0) + params.get("hold_duration_s", 0) + 0.2,
             0.5,
         )
-        cap_kwargs = {
-            "signals": measurements,
-            "duration_s": duration,
-            "analysis": ["mean", "max", "min", "rms",
-                         "overshoot", "rise_time", "settling_time",
-                         "thd", "rocof"],
-        }
+        analysis = ["mean", "max", "min", "rms",
+                    "overshoot", "rise_time", "settling_time",
+                    "thd", "rocof"]
+        extra: dict = {}
         # Pass through optional capture-tuning params from the scenario
         for k in ("heal_target_param", "heal_target_threshold",
                   "rate_hz", "force_polling",
                   "trigger_source", "trigger_threshold", "trigger_edge",
                   "trigger_timeout_s"):
             if k in params:
-                cap_kwargs[k] = params[k]
-        cap_result = await hil.execute("hil_capture", cap_kwargs)
+                extra[k] = params[k]
+        cap_result = await dut.capture(
+            measurements, duration, analysis=analysis, **extra,
+        )
         if "error" in cap_result:
             # Real-mode capture failure: do NOT fall back to PASS
             status, fail_reason = "error", f"capture failed: {cap_result['error']}"
@@ -108,9 +109,10 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
         stats = []
 
     elapsed = time.time() - t0
+    # Pydantic validates ``status`` against the Literal in ScenarioResult.
     result = ScenarioResult(
         scenario_id=sid,
-        status=status,
+        status=status,  # type: ignore[arg-type]
         duration_s=round(elapsed, 3),
         waveform_stats=stats,
         fail_reason=fail_reason,
@@ -132,8 +134,14 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
 
 # ----- Helpers -----
 
-async def _apply_stimulus(hil, params: dict):
-    """Apply test stimulus (ramp, step, fault) based on parameters."""
+async def _apply_stimulus(dut, params: dict):
+    """Apply test stimulus (ramp, step, fault) based on parameters.
+
+    ``dut`` is any object with an ``execute(tool_name, tool_input)`` method --
+    a DUTBackend (preferred) or, for backward compatibility, a raw
+    HILToolExecutor. Fault templates use the same surface, so they keep
+    working unchanged.
+    """
     import asyncio
 
     # Preferred path: declarative fault template.
@@ -147,7 +155,7 @@ async def _apply_stimulus(hil, params: dict):
             raise ValueError(
                 f"fault_template={template_name} missing params: {missing}"
             )
-        await template.apply(hil, params)
+        await template.apply(dut, params)
         return
 
     if "target_cell" in params:
@@ -161,9 +169,9 @@ async def _apply_stimulus(hil, params: dict):
         normal = params.get("normal_voltage", 3.6)
         fault = params["fault_voltage"]
         dur = params.get("ramp_duration_s", 0.2)
-        await hil.execute("hil_signal_write", {"signal": signal, "value": normal})
+        await dut.execute("hil_signal_write", {"signal": signal, "value": normal})
         await asyncio.sleep(0.05)
-        await hil.execute("hil_signal_write", {
+        await dut.execute("hil_signal_write", {
             "signal": signal, "waveform": "ramp",
             "start_value": normal, "end_value": fault, "duration_s": dur,
         })
@@ -172,13 +180,13 @@ async def _apply_stimulus(hil, params: dict):
     elif "test_voltage" in params and signal:
         v = params["test_voltage"]
         hold = params.get("hold_duration_s", 1.0)
-        await hil.execute("hil_signal_write", {"signal": signal, "value": v})
+        await dut.execute("hil_signal_write", {"signal": signal, "value": v})
         await asyncio.sleep(hold)
 
     elif "target_cells" in params:
         for cell in params["target_cells"]:
             sig = f"V_cell_{cell}"
-            await hil.execute("hil_signal_write", {
+            await dut.execute("hil_signal_write", {
                 "signal": sig, "waveform": "ramp",
                 "start_value": params.get("normal_voltage", 3.6),
                 "end_value": params.get("fault_voltage", 4.5),
@@ -187,7 +195,7 @@ async def _apply_stimulus(hil, params: dict):
         await asyncio.sleep(params.get("ramp_duration_s", 0.2) + 0.05)
 
     elif "fault_type" in params:
-        await hil.execute("hil_fault_inject", {
+        await dut.execute("hil_fault_inject", {
             "fault_type": params["fault_type"],
             "target": params.get("target_sensor", ""),
             "parameters": params,

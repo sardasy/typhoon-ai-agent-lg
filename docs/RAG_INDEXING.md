@@ -30,6 +30,39 @@ After indexing, the agent picks up Chroma automatically — no code changes.
 
 Total today: **133 docs**.
 
+## Domain namespacing (Phase 4-G)
+
+Every indexed document carries a `metadata.domain` tag — one of
+`bms`, `pcs`, `grid`, `general`. The indexer fills it via
+`src.domain_classifier.infer_doc_domain` (heuristic on `standard`
+metadata + text vote); explicit `metadata["domain"]` from the
+collector wins. Re-run `python scripts/index_knowledge.py` to
+backfill an older index.
+
+Query-time, callers pass an optional `domain` argument:
+
+```python
+rag.execute("rag_query", {
+    "query": "OVP threshold response time",
+    "sources": ["standards", "test_history"],
+    "domain": "bms",      # filters to docs tagged bms OR general
+})
+```
+
+The filter always includes `general` as a catch-all so shared API
+references / common safety notes remain visible to every agent.
+
+`load_model` now populates `state["rag_context_by_domain"]` with one
+entry per domain alongside the global `state["rag_context"]`.
+`analyze_failure` reads the entry matching the failed scenario's
+domain and falls back to the global pull when the namespace is empty.
+
+Indexer log line shows the per-domain breakdown:
+
+```
+[standards] indexed 25 documents (collection=thaa_standards) | bms=8, grid=12, pcs=3, general=2
+```
+
 ## How the pipeline uses RAG
 
 ```

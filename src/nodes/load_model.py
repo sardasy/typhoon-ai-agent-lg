@@ -14,17 +14,87 @@ import yaml
 
 from ..presets import get_preset
 from ..state import AgentState, make_event
+from ..tools.dut import BaseBackend, HILBackend, get_backend
 from ..tools.hil_tools import HAS_TYPHOON, HILToolExecutor
 from ..tools.rag_tools import RAGToolExecutor
 
 
-# Module-level singletons (shared across graph invocations)
-_hil = HILToolExecutor()
+# Module-level singletons (shared across graph invocations).
+# DUT backends are cached by ``(name, frozenset(config.items()))`` so distinct
+# configurations (e.g. different a2l paths) get distinct instances while the
+# common hil/no-config case is shared with the legacy ``_hil`` singleton.
+_dut_singletons: dict[tuple[str, "frozenset[Any]"], BaseBackend] = {}
 _rag = RAGToolExecutor()
 
 
+def _legacy_hil_backend() -> HILBackend:
+    """Return the cached default HIL backend, instantiating once."""
+    key: tuple[str, frozenset[Any]] = ("hil", frozenset())
+    backend = _dut_singletons.get(key)
+    if backend is None:
+        backend = HILBackend(config={})
+        _dut_singletons[key] = backend
+    return backend  # type: ignore[return-value]
+
+
 def get_hil() -> HILToolExecutor:
-    return _hil
+    """Backward-compat accessor: returns the underlying HILToolExecutor.
+
+    Existing callers (tests, fault_templates indirectly) keep working.
+    New code should call :func:`get_dut` instead.
+    """
+    return _legacy_hil_backend().hil
+
+
+def get_dut(
+    state: AgentState | dict | None = None,
+    *,
+    scenario: dict | None = None,
+) -> BaseBackend:
+    """Return the DUT backend for the current state.
+
+    Backends are singletons keyed by (name, device_id, config). The
+    default is ``HILBackend`` on the ``"default"`` device -- preserves
+    current behavior when ``dut_backend`` and ``device_id`` are unset.
+
+    Phase 4-I: when ``scenario`` is supplied and carries
+    ``scenario["device_id"]``, the matching overlay from
+    ``state["device_pool"]`` is merged on top of ``state["dut_config"]``
+    so the backend instance points at the right physical device.
+    """
+    state = state or {}
+    name = state.get("dut_backend") or "hil"
+    base_config = dict(state.get("dut_config") or {})
+
+    # Phase 4-I device routing.
+    pool = state.get("device_pool") or {}
+    device_id = "default"
+    if scenario is not None:
+        device_id = scenario.get("device_id") or "default"
+    elif "device_id" in base_config:
+        device_id = base_config["device_id"]
+
+    overlay = pool.get(device_id) or {}
+    config = {**base_config, **overlay, "device_id": device_id}
+
+    try:
+        config_key = frozenset((k, _hashable(v)) for k, v in config.items())
+    except TypeError:
+        config_key = frozenset()  # unhashable -- give up on caching
+    key = (name, config_key)
+    backend = _dut_singletons.get(key)
+    if backend is None:
+        backend = get_backend(name, config)
+        _dut_singletons[key] = backend
+    return backend
+
+
+def _hashable(value):
+    if isinstance(value, (list, tuple)):
+        return tuple(_hashable(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _hashable(v)) for k, v in value.items()))
+    return value
 
 
 def get_rag() -> RAGToolExecutor:
@@ -35,7 +105,7 @@ async def load_model(state: AgentState) -> dict[str, Any]:
     """Load HIL model, discover signals, fetch RAG context."""
 
     config_path = state.get("config_path", "configs/model.yaml")
-    cfg = {}
+    cfg: dict[str, Any] = {}
     p = Path(config_path)
     if p.exists():
         cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -74,18 +144,17 @@ async def load_model(state: AgentState) -> dict[str, Any]:
                 f"Unknown preset '{preset_name}' — ignoring",
             ))
 
-    # Load model
-    hil = get_hil()
-    result = await hil.execute("hil_control", {
-        "action": "load",
-        "model_path": model_path,
-    })
+    # Load model via the configured DUT backend (default: HIL).
+    dut = get_dut(state)
+    result = await dut.control("load", model_path=model_path)
     signals = result.get("signals", [])
 
-    # Start simulation
-    await hil.execute("hil_control", {"action": "start"})
+    # Start simulation (no-op for XCP-only backends).
+    await dut.control("start")
 
-    # RAG query for standards context
+    # RAG query for standards context. Phase 4-G: also fetch per-domain
+    # namespaces so the orchestrator's BMS/PCS/Grid agents see only
+    # context relevant to their work.
     goal = state.get("goal", "")
     rag = get_rag()
     rag_result = await rag.execute("rag_query", {
@@ -97,9 +166,29 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         r["text"] for r in rag_result.get("results", [])
     )
 
+    # Per-domain pull (Phase 4-G). ``ALL_DOMAINS`` is small (4 names),
+    # so this adds 4 tiny calls during init -- well worth the
+    # signal-to-noise improvement at analyzer time.
+    from ..domain_classifier import ALL_DOMAINS
+    rag_context_by_domain: dict[str, str] = {}
+    for d in ALL_DOMAINS:
+        sub = await rag.execute("rag_query", {
+            "query": goal,
+            "sources": ["standards", "test_history"],
+            "top_k": 5,
+            "domain": d,
+        })
+        rag_context_by_domain[d] = "\n".join(
+            r["text"] for r in sub.get("results", [])
+        )
+
+    nonempty = sum(1 for v in rag_context_by_domain.values() if v)
     events.append(make_event(
         "load_model", "observation",
-        f"Model loaded: {len(signals)} signals. RAG: {len(rag_result.get('results', []))} docs.",
+        f"Model loaded: {len(signals)} signals. RAG: "
+        f"{len(rag_result.get('results', []))} docs (global) + "
+        f"{nonempty}/{len(ALL_DOMAINS)} domain namespaces populated.",
+        {"domain_namespaces": {d: bool(v) for d, v in rag_context_by_domain.items()}},
     ))
 
     return {
@@ -109,5 +198,6 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         "device_mode": device_mode,
         "active_preset": active_preset,
         "rag_context": rag_context,
+        "rag_context_by_domain": rag_context_by_domain,
         "events": events,
     }
