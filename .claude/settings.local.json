@@ -50,7 +50,10 @@
       "Bash(xargs cat *)",
       "Bash(find /c/Users/junpr/hilagent/typhoon_ai_agent_lg/.claude/worktrees/eager-aryabhata-3a407d/tests -name \"test_*.py\" -exec wc -l {} +)",
       "Bash(xargs -I{} bash -c 'echo \"$\\(basename {}\\): $\\(grep -cE \"^[[:space:]]*\\(def test_|async def test_\\)\" {}\\)\"')",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)"
     ]
   }
 }
