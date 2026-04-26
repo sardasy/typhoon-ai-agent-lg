@@ -61,6 +61,12 @@ def _load_predefined_scenarios(config_path: str) -> list[dict[str, Any]]:
             "pass_fail_rules": spec.get("pass_fail_rules", {}),
             # Phase 4-I: optional per-scenario device routing
             "device_id": spec.get("device_id", "default"),
+            # P0 #3: mock-mode override -- when set, ``execute_scenario``
+            # bypasses the evaluator and forces this status. Lets a
+            # scenario library smoke-test pipeline plumbing on
+            # ``--dut-backend mock`` without expensive Claude analyze
+            # cycles on the inevitable mock-zero-stats failure.
+            "mock_expected_status": spec.get("mock_expected_status"),
         })
         priority += 1
 

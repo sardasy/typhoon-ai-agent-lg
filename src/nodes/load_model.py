@@ -126,6 +126,39 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         )
     ]
 
+    # P0 #1: Per-model SafetyConfig overlay -- merge
+    # ``configs/safety/<profile>.yaml`` into state.safety_config.
+    safety_overlay: dict[str, Any] = {}
+    profile = model_cfg.get("safety_profile", "")
+    if profile:
+        safety_path = (
+            Path(__file__).resolve().parent.parent.parent
+            / "configs" / "safety" / f"{profile}.yaml"
+        )
+        if safety_path.exists():
+            try:
+                safety_overlay = (
+                    yaml.safe_load(safety_path.read_text(encoding="utf-8"))
+                    or {}
+                )
+                events.append(make_event(
+                    "load_model", "observation",
+                    f"Safety profile: {profile} "
+                    f"(max_voltage={safety_overlay.get('max_voltage')}, "
+                    f"max_current={safety_overlay.get('max_current')})",
+                    {"profile": profile, "overlay": safety_overlay},
+                ))
+            except (OSError, yaml.YAMLError) as exc:
+                events.append(make_event(
+                    "load_model", "warning",
+                    f"Safety profile '{profile}' load failed: {exc}",
+                ))
+        else:
+            events.append(make_event(
+                "load_model", "warning",
+                f"Safety profile '{profile}' not found at {safety_path}",
+            ))
+
     # Preset merge (Quick Win 5). Explicit model.* values override preset values.
     preset_name = model_cfg.get("preset", "") or ""
     active_preset = ""
@@ -151,9 +184,21 @@ async def load_model(state: AgentState) -> dict[str, Any]:
     import os as _os
     vhil_flag = bool(model_cfg.get("vhil", False)) or \
         _os.environ.get("THAA_VHIL", "").lower() in ("1", "true", "yes")
+
+    # P0 #2: VHIL device class. Some models (HIL606 ESS) require a
+    # higher-capacity device than the VHIL default (HIL402 / 4 PE
+    # converters). Override via ``model.vhil_device`` in YAML or
+    # ``THAA_VHIL_DEVICE=HIL606`` env. ``True`` (default) lets the
+    # Typhoon API pick automatically.
+    vhil_device = (
+        model_cfg.get("vhil_device")
+        or _os.environ.get("THAA_VHIL_DEVICE")
+        or vhil_flag
+    )
+
     dut = get_dut(state)
     result = await dut.control(
-        "load", model_path=model_path, vhil_device=vhil_flag,
+        "load", model_path=model_path, vhil_device=vhil_device,
     )
     signals = result.get("signals", [])
 
@@ -207,5 +252,6 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         "active_preset": active_preset,
         "rag_context": rag_context,
         "rag_context_by_domain": rag_context_by_domain,
+        "safety_config": safety_overlay,
         "events": events,
     }

@@ -228,6 +228,13 @@ class AgentState(TypedDict):
     # to either ``apply_fix`` (commit) or ``advance_scenario`` (veto).
     twin_prediction: dict | None
 
+    # --- Per-model safety overlay (P0 #1) ---
+    # Loaded from ``configs/safety/<profile>.yaml`` when the run config's
+    # ``model.safety_profile`` field is set. ``apply_fix`` builds a
+    # ``Validator`` from this overlay so e.g. an ESS run can lift
+    # ``max_voltage`` to 900V without forking the codebase.
+    safety_config: dict
+
     # --- DUT abstraction (Phase 4-A) ---
     # dut_backend: which backend execute_scenario / apply_fix route through.
     #   "hil"    -- Typhoon HIL only (default, current behavior)

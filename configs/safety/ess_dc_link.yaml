@@ -1,0 +1,16 @@
+# Safety profile: ESS DC link / EV charger battery side
+# 490V Li-ion battery, ~800V DC bus, 100A charging
+#
+# Used by: configs/scenarios_250123.yaml (ESS/EV charger 32 scenarios)
+# Reference this file from a model.yaml as:
+#   model:
+#     safety_profile: ess_dc_link
+
+# Battery max + DC bus headroom
+max_voltage: 900.0
+# Charging / discharging current peak
+max_current: 250.0
+
+max_fault_injections: 20
+auto_retry_limit: 3
+timeout_per_test_s: 60.0

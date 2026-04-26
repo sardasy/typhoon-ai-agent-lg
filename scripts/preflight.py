@@ -86,6 +86,101 @@ def check_env() -> list[CheckResult]:
     return out
 
 
+def check_safety_profile(config_path: str = "configs/model.yaml") -> list[CheckResult]:
+    """P0 #5: verify the model's safety_profile is consistent with
+    the model's actual operating range.
+
+    Catches the class of bug where ``max_voltage=60V`` blocks every
+    write on a 490V battery system because the operator forgot to
+    set ``safety_profile``.
+    """
+    p = (ROOT / config_path).resolve()
+    if not p.exists():
+        return [CheckResult("safety", "SKIP",
+                              f"{config_path} not found", required=False)]
+    try:
+        import yaml
+        cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return [CheckResult("safety", "FAIL", f"YAML: {exc}")]
+
+    out: list[CheckResult] = []
+    model = cfg.get("model") or {}
+    profile = model.get("safety_profile", "")
+
+    if not profile:
+        # No profile set -- check if model.yaml's other fields suggest
+        # a high-voltage system (so the default 60V max is wrong).
+        suspect_keys = (
+            "battery_voltage_v", "battery_voltage_max_v", "dc_link_voltage_v",
+            "grid_voltage_rms_ll", "grid_voltage_rms",
+        )
+        for k in suspect_keys:
+            v = model.get(k)
+            if isinstance(v, (int, float)) and v > 100:
+                out.append(CheckResult(
+                    "safety.profile_missing", "WARN",
+                    f"{config_path} sets {k}={v} but no "
+                    f"``safety_profile``: default max_voltage=60V will "
+                    f"block every XCP write. Add e.g. "
+                    f"``safety_profile: ess_dc_link`` to model section.",
+                    required=False,
+                ))
+                return out
+        out.append(CheckResult(
+            "safety.profile", "PASS",
+            "default profile (60V/200A) -- ok for low-voltage models",
+        ))
+        return out
+
+    # Profile referenced -- verify file exists.
+    safety_path = ROOT / "configs" / "safety" / f"{profile}.yaml"
+    if not safety_path.exists():
+        return [CheckResult(
+            "safety.profile", "FAIL",
+            f"model.safety_profile = '{profile}' but "
+            f"{safety_path.relative_to(ROOT)} does not exist",
+        )]
+    try:
+        import yaml
+        prof = yaml.safe_load(safety_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return [CheckResult("safety.profile", "FAIL", f"YAML parse: {exc}")]
+
+    out.append(CheckResult(
+        "safety.profile", "PASS",
+        f"{profile}: max_V={prof.get('max_voltage')}, "
+        f"max_I={prof.get('max_current')}",
+    ))
+
+    # Cross-check: max_voltage should cover the model's stated voltages.
+    model_max_v = max(
+        (v for v in (
+            model.get("battery_voltage_max_v"),
+            model.get("battery_voltage_v"),
+            model.get("dc_link_voltage_v"),
+            (model.get("grid_voltage_rms_ll") or 0) * 1.5,  # peak-ish
+            (model.get("grid_voltage_rms") or 0) * 1.5,
+        ) if isinstance(v, (int, float)) and v > 0),
+        default=0.0,
+    )
+    if model_max_v and prof.get("max_voltage", 0) < model_max_v:
+        out.append(CheckResult(
+            "safety.voltage_consistency", "WARN",
+            f"profile max_voltage={prof.get('max_voltage')} but model "
+            f"declares operating voltage up to {model_max_v:.0f}V -- "
+            f"writes near the operating point will be BLOCKED",
+            required=False,
+        ))
+    else:
+        out.append(CheckResult(
+            "safety.voltage_consistency", "PASS",
+            f"profile max_V={prof.get('max_voltage')} >= model "
+            f"max operating ~{model_max_v:.0f}V",
+        ))
+    return out
+
+
 def check_config(config_path: str = "configs/model.yaml") -> list[CheckResult]:
     p = (ROOT / config_path).resolve()
     if not p.exists():
@@ -182,6 +277,45 @@ def check_xcp(a2l_path: str | None) -> list[CheckResult]:
                 out.append(CheckResult(
                     "xcp.a2l", "FAIL", f"A2L parse failed: {exc}",
                 ))
+
+        # P1 #9: A2L checksum / version pin. The expected checksum
+        # lives in ``configs/firmware/<a2l_basename>.sha256`` (one
+        # line). Mismatch -> WARN: silent wrong-data risk if the
+        # binary on the ECU was rebuilt without re-running the
+        # indexer.
+        try:
+            import hashlib
+            checksum_dir = ROOT / "configs" / "firmware"
+            expected_file = checksum_dir / f"{a2l.stem}.sha256"
+            digest = hashlib.sha256(a2l.read_bytes()).hexdigest()
+            if expected_file.exists():
+                expected = expected_file.read_text(encoding="utf-8").strip().split()[0]
+                if digest == expected:
+                    out.append(CheckResult(
+                        "xcp.a2l_checksum", "PASS",
+                        f"sha256 matches pinned ({digest[:12]}...)",
+                    ))
+                else:
+                    out.append(CheckResult(
+                        "xcp.a2l_checksum", "WARN",
+                        f"sha256 drift: file {digest[:12]} vs pinned "
+                        f"{expected[:12]} -- firmware may have been "
+                        f"rebuilt; calibration addresses likely shifted",
+                        required=False,
+                    ))
+            else:
+                out.append(CheckResult(
+                    "xcp.a2l_checksum", "SKIP",
+                    f"no pinned checksum at "
+                    f"{expected_file.relative_to(ROOT)}; pin via "
+                    f"``echo <sha256> > {expected_file.relative_to(ROOT)}``",
+                    required=False,
+                ))
+        except OSError as exc:
+            out.append(CheckResult(
+                "xcp.a2l_checksum", "WARN",
+                f"checksum read failed: {exc}", required=False,
+            ))
     else:
         out.append(CheckResult(
             "xcp.a2l", "SKIP", "no --a2l-path supplied", required=False,
@@ -308,12 +442,14 @@ def run_all(
     *,
     do_env: bool = True, do_config: bool = True, do_hil: bool = True,
     do_xcp: bool = True, do_rag: bool = True, do_twin: bool = True,
+    do_safety: bool = True,
     config_path: str = "configs/model.yaml",
     a2l_path: str | None = None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     if do_env:    results.extend(check_env())
     if do_config: results.extend(check_config(config_path))
+    if do_safety: results.extend(check_safety_profile(config_path))
     if do_hil:    results.extend(check_hil())
     if do_xcp:    results.extend(check_xcp(a2l_path))
     if do_rag:    results.extend(check_rag())

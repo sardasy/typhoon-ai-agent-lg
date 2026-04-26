@@ -46,6 +46,25 @@ def _audit_path() -> Path:
     return path
 
 
+def _rotated_path(base: Path) -> Path:
+    """P1 #11: date-based rotation.
+
+    ``runs/hitl_audit.jsonl`` becomes ``runs/hitl_audit-YYYY-MM.jsonl``
+    -- one file per calendar month. Disable by exporting
+    ``THAA_AUDIT_ROTATE=off``. Existing flat path stays the default
+    (backward compat).
+    """
+    if (os.environ.get("THAA_AUDIT_ROTATE") or "").lower() in (
+        "off", "0", "false", "no",
+    ):
+        return base
+    yyyymm = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m")
+    suffix = base.suffix or ".jsonl"
+    rotated = base.with_name(f"{base.stem}-{yyyymm}{suffix}")
+    rotated.parent.mkdir(parents=True, exist_ok=True)
+    return rotated
+
+
 def _operator_id() -> str:
     """Best-effort operator identity for the audit record."""
     if (op := os.environ.get("THAA_OPERATOR")):
@@ -91,7 +110,7 @@ def record_hitl_decision(
     if _is_disabled():
         return record
     try:
-        path = _audit_path()
+        path = _rotated_path(_audit_path())
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:

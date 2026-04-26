@@ -152,6 +152,7 @@ class TestRunAll:
         out = run_all(
             do_env=True, do_config=False, do_hil=False,
             do_xcp=False, do_rag=False, do_twin=False,
+            do_safety=False,
         )
         names = {r.name for r in out}
         assert names == {"python", "deps"}

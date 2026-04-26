@@ -17,6 +17,7 @@
 model:
   path: "C:/Users/junpr/Downloads/invertertest Target files/invertertest.cpd"
   device: "HIL101"
+  safety_profile: vsm_gfm            # P0 #1: 600V max for 230V_LL grid
   timestep_us: 1.0
   grid_voltage_rms_ll: 230
   grid_frequency_hz: 50

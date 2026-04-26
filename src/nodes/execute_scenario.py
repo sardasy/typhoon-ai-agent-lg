@@ -13,6 +13,8 @@ from typing import Any
 
 from ..evaluator import evaluate as evaluate_rules
 from ..fault_templates import get_template, validate_params
+from ..heartbeat import beat as _heartbeat
+from ..liveness import observe as _liveness_observe
 from ..state import AgentState, ScenarioResult, WaveformStats, make_event
 from .load_model import get_dut
 
@@ -62,6 +64,30 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
 
     # Phase 4-I: per-scenario device routing. Scenarios with no
     # ``device_id`` field hit the same default backend as before.
+    # P0 #3: when running on the mock DUT and the scenario YAML pinned
+    # ``mock_expected_status``, short-circuit to that status without
+    # invoking stimulus / capture / evaluator. Saves Claude tokens on
+    # smoke-test runs of large scenario libraries.
+    if state.get("dut_backend") == "mock":
+        forced = scenario.get("mock_expected_status")
+        if forced in ("pass", "fail", "error", "skipped"):
+            forced_result = ScenarioResult(
+                scenario_id=sid, status=forced,
+                duration_s=0.0, waveform_stats=[],
+                fail_reason="" if forced == "pass" else "mock_expected_status override",
+                retry_count=state.get("heal_retry_count", 0),
+            )
+            return {
+                "current_scenario": scenario,
+                "results": [forced_result.model_dump()],
+                "diagnosis": None,
+                "events": [make_event(
+                    "execute", "result",
+                    f"{forced.upper()}: {name} (mock_expected_status override)",
+                    forced_result.model_dump(),
+                )],
+            }
+
     dut = get_dut(state, scenario=scenario)
     t0 = time.time()
 
@@ -88,6 +114,28 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
         cap_result = await dut.capture(
             measurements, duration, analysis=analysis, **extra,
         )
+        # P1 #10: liveness probe -- 3 consecutive flatlined captures
+        # on a real-hardware backend abort the run.
+        live_alert, live_reason = _liveness_observe(
+            getattr(dut, "name", "?"),
+            cap_result.get("statistics", []) if isinstance(cap_result, dict) else [],
+        )
+        if live_alert:
+            return {
+                "current_scenario": scenario,
+                "results": [ScenarioResult(
+                    scenario_id=sid, status="error",
+                    duration_s=round(time.time() - t0, 3),
+                    waveform_stats=[], fail_reason=live_reason,
+                    retry_count=state.get("heal_retry_count", 0),
+                ).model_dump()],
+                "diagnosis": None,
+                "error": live_reason,
+                "events": [make_event(
+                    "execute", "error",
+                    f"LIVENESS ALERT: {live_reason}",
+                )],
+            }
         if "error" in cap_result:
             # Real-mode capture failure: do NOT fall back to PASS
             status, fail_reason = "error", f"capture failed: {cap_result['error']}"
@@ -124,6 +172,11 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
     if fail_reason:
         msg += f" — {fail_reason}"
 
+    _heartbeat(node="execute_scenario", state={
+        **state,
+        "current_scenario": scenario,
+        "results": [*state.get("results", []), result.model_dump()],
+    })
     return {
         "current_scenario": scenario,
         "results": [result.model_dump()],

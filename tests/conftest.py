@@ -27,13 +27,23 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_module_state(monkeypatch):
+def _isolate_module_state(monkeypatch, tmp_path):
     """Clear module-level singletons after every test."""
     # Pin RAG tool to mock backend so tests pass regardless of whether
     # the dev machine has a populated chroma_db/.
     import src.tools.rag_tools as _rag_mod
     monkeypatch.setattr(_rag_mod, "HAS_CHROMA", False, raising=False)
     monkeypatch.setattr(_rag_mod, "HAS_QDRANT", False, raising=False)
+
+    # P1 #11: pin audit rotation off so tests can read the configured
+    # path directly. Individual tests can re-enable.
+    monkeypatch.setenv("THAA_AUDIT_ROTATE", "off")
+    # P0 #4: route diagnosis cache + cap to a per-test temp file so
+    # one test's recorded diagnoses never leak into another's run.
+    monkeypatch.setenv(
+        "THAA_DIAGNOSIS_CACHE_PATH", str(tmp_path / "diag_cache.jsonl"),
+    )
+    monkeypatch.setenv("THAA_MAX_CLAUDE_CALLS_PER_RUN", "10000")
 
     yield
 
@@ -59,5 +69,17 @@ def _isolate_module_state(monkeypatch):
     try:
         from src.twin import reset_twin
         reset_twin()
+    except ImportError:
+        pass
+
+    try:
+        from src.liveness import reset as _reset_liveness
+        _reset_liveness()
+    except ImportError:
+        pass
+
+    try:
+        from src.cost_guard import reset_call_count
+        reset_call_count()
     except ImportError:
         pass

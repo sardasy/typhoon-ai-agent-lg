@@ -15,12 +15,23 @@ from ..constants import ACTION_XCP_CALIBRATION
 from ..state import AgentState, make_event
 from ..tools.xcp_tools import XCPToolExecutor
 from ..twin import get_twin
-from ..validator import Validator
+from ..validator import SafetyConfig, Validator
 from .load_model import get_dut
 
 logger = logging.getLogger(__name__)
 
-_validator = Validator()
+# Default validator: conservative SafetyConfig. ``apply_fix`` reads
+# ``state["safety_config"]`` (set by ``load_model`` from
+# ``configs/safety/<profile>.yaml``) when present, so per-model
+# overlays kick in without code changes.
+_default_validator = Validator()
+
+
+def _validator_for(state: AgentState) -> Validator:
+    overlay = state.get("safety_config")
+    if isinstance(overlay, dict) and overlay:
+        return Validator(SafetyConfig.from_overlay(overlay))
+    return _default_validator
 
 
 def get_xcp() -> XCPToolExecutor:
@@ -56,8 +67,8 @@ async def apply_fix(state: AgentState) -> dict[str, Any]:
             "events": [make_event("apply_fix", "action", f"No XCP fix to apply (type={action_type})")],
         }
 
-    # Safety check
-    check = _validator.validate("xcp_interface", {
+    # Safety check (per-model overlay if state["safety_config"] set).
+    check = _validator_for(state).validate("xcp_interface", {
         "action": "write", "variable": param, "value": value,
     })
     if not check.allowed:

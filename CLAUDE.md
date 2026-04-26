@@ -308,6 +308,20 @@ These are the types of requests you will receive most often. Follow the patterns
 ANTHROPIC_API_KEY=sk-ant-...      # Required for Claude API calls
 QDRANT_URL=http://localhost:6333  # Optional, for RAG
 
+# Production controls (P0 + P1 sprint)
+THAA_VHIL=1                       # Force VHIL simulator over physical HIL
+THAA_VHIL_DEVICE=HIL606           # Override VHIL device class
+THAA_MAX_CLAUDE_CALLS_PER_RUN=200 # Hard cap on analyze_failure calls
+THAA_DIAGNOSIS_CACHE=off          # Disable on-disk diagnosis cache
+THAA_DIAGNOSIS_CACHE_PATH=runs/diag_cache.jsonl
+THAA_HEARTBEAT_PATH=runs/heartbeat.json   # Liveness file (watchdog target)
+THAA_HITL_TIMEOUT=600             # Auto-reject HITL after N seconds
+THAA_LIVENESS_PROBE=on            # Abort on 3 consecutive flatline captures
+THAA_AUDIT_PATH=runs/hitl_audit.jsonl
+THAA_AUDIT_OPERATOR=operator@org.com
+THAA_AUDIT_ROTATE=off             # Disable date-based rotation
+
+
 # LangSmith tracing (all optional, opt-in)
 LANGCHAIN_TRACING_V2=true         # Enables tracing when set to "true"
 LANGCHAIN_API_KEY=lsv2_pt_...     # Required if tracing enabled

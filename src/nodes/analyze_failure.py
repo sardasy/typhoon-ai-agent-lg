@@ -34,12 +34,57 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
 
     # The last result is the failed one
     failed_result = results[-1]
+    sid = scenario.get("scenario_id", "")
+
+    # P0 #4: cost guard -- consult the on-disk diagnosis cache first
+    # (saves Claude tokens on identical re-failures across runs), and
+    # short-circuit to ``escalate`` once the per-run hard cap trips.
+    from ..cost_guard import (
+        consume_one_call, lookup_cached_diagnosis,
+        record_cached_diagnosis, synthetic_escalate_diagnosis,
+    )
+    cached = lookup_cached_diagnosis(sid, failed_result)
+    if cached is not None:
+        return {
+            "diagnosis": cached,
+            "events": [make_event(
+                "analyze", "diagnosis",
+                f"Cached diagnosis hit for {sid} -- skipping Claude call",
+                cached,
+            )],
+        }
+    if not consume_one_call():
+        synth = synthetic_escalate_diagnosis(
+            sid,
+            "Claude per-run call cap reached (THAA_MAX_CLAUDE_CALLS_PER_RUN). "
+            "Escalating remaining failures.",
+        )
+        return {
+            "diagnosis": synth,
+            "events": [make_event(
+                "analyze", "error",
+                "Cost guard tripped: synthetic escalate diagnosis emitted",
+                synth,
+            )],
+        }
 
     # Load analyzer prompt + Phase 4-B domain overlay (BMS / PCS / Grid).
     base_prompt = ANALYZER_PROMPT_PATH.read_text(encoding="utf-8")
     domain = scenario.get("domain") or state.get("current_domain") or "general"
     overlay = overlay_for(domain)
     system_prompt = f"{base_prompt}\n\n{overlay}".rstrip() if overlay else base_prompt
+
+    # P1 #7: inject the live XCP whitelist so the analyzer never proposes
+    # a corrective_param outside the allowed set. Saves Claude tokens
+    # (no more BLOCKED retries on proposals like ``BMS_contactorDelay_ms``).
+    from ..validator import WRITABLE_XCP_PARAMS
+    system_prompt += (
+        "\n\n## Calibration whitelist (HARD CONSTRAINT)\n"
+        "When proposing ``corrective_action.parameter``, you MUST choose\n"
+        "from this exact set. Any other parameter will be rejected by the\n"
+        "Validator and the heal retry will be wasted:\n"
+        + ", ".join(sorted(WRITABLE_XCP_PARAMS))
+    )
 
     # Build context
     user_msg = (
@@ -103,6 +148,10 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
 
     desc = diagnosis["root_cause_description"]
     conf = diagnosis["confidence"]
+
+    # P0 #4: persist to the cache so identical re-failures next run
+    # skip Claude entirely.
+    record_cached_diagnosis(sid, failed_result, diagnosis)
 
     return {
         "diagnosis": diagnosis,

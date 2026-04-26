@@ -42,6 +42,16 @@ WRITABLE_XCP_PARAMS: frozenset[str] = frozenset({
 
 @dataclass
 class SafetyConfig:
+    """Hard physical-equipment limits enforced by ``Validator``.
+
+    Defaults are deliberately conservative (battery-cell / 12V system
+    range). For ESS / EV-charger / GFM systems with higher voltages
+    or currents, override per-model via ``configs/safety/<name>.yaml``
+    and reference the file in the model YAML's ``model.safety_profile``
+    field. ``load_model`` merges the overlay onto the defaults.
+
+    See ``docs/SAFETY_PROFILES.md``.
+    """
     max_voltage: float = 60.0
     max_current: float = 200.0
     max_fault_injections: int = 10
@@ -50,6 +60,24 @@ class SafetyConfig:
     writable_xcp_params: set[str] = field(
         default_factory=lambda: set(WRITABLE_XCP_PARAMS),
     )
+
+    @classmethod
+    def from_overlay(cls, overlay: dict) -> "SafetyConfig":
+        """Build a SafetyConfig from a YAML-loaded dict overlay.
+
+        Unknown keys are ignored (forward-compat). ``writable_xcp_params``
+        if present REPLACES the default whitelist for that profile --
+        intentional, so e.g. an EV-charger profile can disable BMS
+        params it never touches.
+        """
+        kwargs: dict = {}
+        for key in ("max_voltage", "max_current", "max_fault_injections",
+                     "auto_retry_limit", "timeout_per_test_s"):
+            if key in overlay:
+                kwargs[key] = overlay[key]
+        if "writable_xcp_params" in overlay:
+            kwargs["writable_xcp_params"] = set(overlay["writable_xcp_params"])
+        return cls(**kwargs)
 
 
 @dataclass
