@@ -1,5 +1,5 @@
 """
-RAG Tools — vector search for standards, API docs, test history.
+RAG Tools -- vector search for standards, API docs, test history.
 
 Backend priority: ChromaDB (embedded, no server) > Qdrant > mock KB.
 ChromaDB is the default; a populated `chroma_db/` directory is required.
@@ -116,7 +116,7 @@ class RAGToolExecutor:
             },
             {
                 "id": "ieee2800_9",
-                "text": "IEEE 2800-2022 §9: Grid-forming (GFM) inverter steady-state "
+                "text": "IEEE 2800-2022 sec.9: Grid-forming (GFM) inverter steady-state "
                         "requirements. Virtual inertia J, damping D, voltage droop Kv.",
                 "metadata": {"standard": "IEEE 2800", "section": "9",
                              "domain": "grid"},

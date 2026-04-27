@@ -128,7 +128,7 @@ async def analyze_failure(state: AgentState) -> dict[str, Any]:
         return {
             "diagnosis": {
                 "failed_scenario_id": scenario.get("scenario_id", ""),
-                "root_cause_description": "Analysis failed — could not parse response",
+                "root_cause_description": "Analysis failed -- could not parse response",
                 "corrective_action_type": "escalate",
             },
             "events": [make_event("analyze", "error", "Invalid JSON from analyzer")],

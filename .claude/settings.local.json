@@ -78,7 +78,13 @@
       "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_llm_nodes.py tests/test_preflight.py tests/test_sprint2_quality.py --tb=line -q)",
       "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_p0_p1_improvements.py -v --tb=short)",
       "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest --cov --cov-report=term --tb=no -q)",
-      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m mypy)"
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m mypy)",
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_ascii_only.py -q --tb=line)",
+      "Bash(/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_ascii_only.py -q)",
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_mirim_hard_rules.py -v --tb=short)",
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/ --cov --cov-report=term --tb=no -q)",
+      "Bash(\"/c/Users/junpr/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_dut_fault_injection.py -v --tb=short)"
     ]
   }
 }

@@ -1,5 +1,5 @@
 """
-Validator — Safety guard for all agent tool actions.
+Validator -- Safety guard for all agent tool actions.
 
 Every tool call passes through here before execution.
 Blocks dangerous actions and enforces physical limits.

@@ -23,7 +23,88 @@ with ``monkeypatch.setattr(rag_mod, "HAS_CHROMA", True)``.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
+
+
+# Hard Rule 3.7 -- enforce no banned terms in test names / IDs.
+# Mirim Syscon CLAUDE.md prohibits "InterBattery" mentions.
+_BANNED_TERMS = ("interbattery",)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Hard Rule 3.3 -- declare the marker registry up front.
+
+    Prevents the ``PytestUnknownMarkWarning`` and gives a single
+    place to extend marker semantics.
+    """
+    for marker, doc in (
+        ("vhil_only", "VHIL backend only (skipped on real HIL/XCP)"),
+        ("hw_required", "Real ECU / HIL hardware required (skipped on mock)"),
+        ("fault_injection", "Fault injection scenario (Roadmap P1)"),
+        ("regression", "CI regression suite -- run on every PR"),
+        ("comm_protocol", "Modbus / CAN / IEC 61850 (Roadmap P2)"),
+        ("hil_measurement", "SignalAnalyzer measurement test (Roadmap P3)"),
+    ):
+        config.addinivalue_line("markers", f"{marker}: {doc}")
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item],
+) -> None:
+    """Hard Rule 3.7 enforcement + marker filtering.
+
+    - Fail collection if any test ID contains a banned term.
+    - Skip ``hw_required`` tests when ``DUT_MODE`` is unset / vhil.
+    - Skip ``vhil_only`` tests when ``DUT_MODE=xcp``.
+    """
+    for item in items:
+        nodeid_low = item.nodeid.lower()
+        for term in _BANNED_TERMS:
+            if term in nodeid_low:
+                pytest.exit(f"Hard Rule 3.7 violation: {item.nodeid} "
+                             f"contains banned term '{term}'", returncode=2)
+
+    dut_mode = (os.environ.get("DUT_MODE", "vhil") or "vhil").lower()
+    skip_hw = pytest.mark.skip(
+        reason="hw_required marker -- set DUT_MODE=xcp to run",
+    )
+    skip_vhil = pytest.mark.skip(
+        reason="vhil_only marker -- DUT_MODE=xcp active",
+    )
+    for item in items:
+        if "hw_required" in item.keywords and dut_mode != "xcp":
+            item.add_marker(skip_hw)
+        if "vhil_only" in item.keywords and dut_mode == "xcp":
+            item.add_marker(skip_vhil)
+
+
+@pytest.fixture(scope="session")
+def model_path(pytestconfig: pytest.Config) -> Path:
+    """Hard Rule 3.3 -- absolute path to the MODEL relative to rootdir.
+
+    Default: ``models/<env DUT_MODEL>.tse`` or
+    ``models/boost.tse``. Tests may override via the ``MODEL_PATH`` env
+    var (full path) for ad-hoc model files outside ``models/``.
+    """
+    override = os.environ.get("MODEL_PATH")
+    if override:
+        return Path(override).expanduser().resolve()
+    name = os.environ.get("DUT_MODEL", "boost")
+    return Path(pytestconfig.rootpath) / "models" / f"{name}.tse"
+
+
+@pytest.fixture(scope="session")
+def dut_mode() -> str:
+    """Hard Rule -- single source of truth for the DUT path.
+
+    Returns ``"vhil"`` (default) or ``"xcp"``. Tests may branch on it
+    to skip hardware-only assertions while keeping the rest of the
+    test body identical -- the V-model dual-path principle.
+    """
+    return (os.environ.get("DUT_MODE", "vhil") or "vhil").lower()
 
 
 @pytest.fixture(autouse=True)

@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         docs = SOURCES[src]()
         log.info("collected %d docs for '%s'", len(docs), src)
         total += upsert_collection(src, docs, clean=args.clean)
-    log.info("DONE — %d documents indexed under %s", total, CHROMA_DIR)
+    log.info("DONE -- %d documents indexed under %s", total, CHROMA_DIR)
     return 0
 
 

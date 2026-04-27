@@ -1,8 +1,13 @@
-# CLAUDE.md — Typhoon HIL AI Agent (LangGraph Edition)
+# CLAUDE.md -- Typhoon HIL AI Agent (LangGraph Edition)
+
+> **Owner:** 미림씨스콘 (Milim Syscon) -- Typhoon HIL Korea solution engineering.
+> **Goal:** dual-path verification (**VHIL ↔ HIL**) with one pytest asset.
+> See section 11 below for the Mirim Syscon Hard Rules (ASCII-only,
+> timedelta indexing, MODEL_PATH, etc.) that all generated code MUST honor.
 
 ## Project identity
 
-This is **THAA** (Typhoon HIL AI Agent) — a LangGraph-based AI agent system that
+This is **THAA** (Typhoon HIL AI Agent) -- a LangGraph-based AI agent system that
 automates **controller verification** using Typhoon HIL (Hardware-in-the-Loop)
 simulation equipment.
 
@@ -415,3 +420,129 @@ with the node name and model ID for filtering.
   -> `execute_scenario` -> route_has_pending) drains the queue with
   per-fix operator approval. SQLite checkpointing supported via
   `acompile_parallel_orchestrator_graph`. See `docs/MULTI_AGENT.md`.
+
+---
+
+## 11. Mirim Syscon Hard Rules (NEVER violate)
+
+These come from the team CLAUDE.md (operator-side context). Each
+rule is enforced by an automated test in ``tests/`` -- a violation
+trips CI before the change can land.
+
+### 11.1 ASCII-only Python source
+TyphoonTest IDE on Windows reads ``.py`` files as cp1254 and crashes
+on multi-byte input. **No Korean / em-dash / smart quotes / ellipsis
+in any ``src/*.py`` or ``scripts/*.py``**. Allowed in ``.md``,
+``.yaml``, ``prompts/`` only. Enforced by
+``tests/test_ascii_only.py`` (parametrised over every shipped
+source file).
+
+### 11.2 capture results use ``pd.Timedelta`` indexing
+``typhoon.test.capture`` returns a Timedelta-indexed DataFrame.
+Integer / float ``.iloc`` / ``.loc`` calls silently return wrong
+rows. **Use ``src.timedelta_helpers.at(df, t_seconds)`` /
+``between(df, start, stop)``** instead of indexing by hand.
+
+### 11.3 MODEL_PATH is absolute, resolved by pytest rootpath
+Never use ``os.getcwd()`` or relative paths inside test code. The
+shared session-scoped fixture in ``tests/conftest.py``:
+
+```python
+@pytest.fixture(scope="session")
+def model_path(pytestconfig) -> Path: ...
+```
+
+Override per run via ``MODEL_PATH=...`` or ``DUT_MODEL=<name>``
+env vars.
+
+### 11.4 Pre-built schematic blocks priority
+SchematicAPI generation MUST use ``core/Boost``, ``core/Half Bridge``,
+``core/Full Bridge``, etc. when the topology is known.
+Don't reconstruct from discrete IGBT + diode + inductor.
+
+### 11.5 ``typhoon.test.*`` high-level API only
+Tests call ``typhoon.test.capture`` / ``typhoon.test.signals`` /
+``typhoon.test.ranges`` / ``typhoon.test.reporting``. Direct calls
+to ``typhoon.api.hil`` belong inside ``src/tools/dut/`` -- never
+in ``tests/``.
+
+### 11.6 Tag / Goto / From for long-distance routing
+SchematicAPI builders MUST use Tag connections for long traces.
+Direct wires across the schematic break the auto-generator.
+
+### 11.7 Banned terms in test IDs
+``conftest.py::pytest_collection_modifyitems`` exits the run on any
+test ID containing the banned set. Currently: ``"InterBattery"``.
+
+## 12. DUT_MODE single switch
+
+```bash
+DUT_MODE=vhil pytest tests/unit/        # VHIL simulator path
+DUT_MODE=xcp pytest tests/integration/  # real ECU path
+```
+
+Reads as alias of ``--dut-backend`` (vhil -> hil internally).
+Test code uses the ``dut_mode`` session fixture rather than the env
+var directly.
+
+## 13. Marker registry
+
+Registered in ``conftest.py::pytest_configure``:
+
+| Marker | Semantics |
+|--------|-----------|
+| ``vhil_only`` | VHIL-only -- skipped on real HIL |
+| ``hw_required`` | real ECU/HIL required -- skipped on mock |
+| ``fault_injection`` | Roadmap P1 scenarios (``src/fault_harness.py``) |
+| ``regression`` | CI gate -- run on every PR |
+| ``comm_protocol`` | Roadmap P2 (Modbus/CAN) |
+| ``hil_measurement`` | Roadmap P3 (SignalAnalyzer) |
+
+## 14. Mirim Syscon roadmap (priorities)
+
+| # | Item | Status |
+|---|------|--------|
+| P1 | VHIL fault injection harness | **scaffolded** -- ``src/fault_harness.py`` (ECU-side primitives + ``FaultScenario`` API + 3 canonical examples) |
+| P2 | Modbus / CAN comm-protocol templates | TBD |
+| P3 | HIL SignalAnalyzer measurement library | TBD |
+| P4 | Hardware fault matrix automation | partial -- 4-A backend abstraction in place |
+| P5 | CI / Xray orchestration | partial -- Allure adapter + check.bat |
+
+## 15. Skill / slash-command catalog
+
+Reference docs landed in ``docs/skills/`` (markdown specs for the
+subagent or slash-command implementations operators run from
+Claude Code):
+
+| File | Trigger | Purpose |
+|------|---------|---------|
+| ``docs/skills/build-schematic.md`` | ``/build-schematic <topology>`` | Generate SchematicAPI Python that builds a ``.tse`` |
+| ``docs/skills/tse-to-pytest.md`` | ``/tse-to-pytest <path>`` | Parse a ``.tse`` and emit a complete pytest project |
+| ``docs/skills/fault-injector.md`` | ``fault-injector`` subagent | Inject OCP/OVP/UVP/source-loss/sensor faults via the dual-path DUTInterface |
+| ``docs/api-patterns.md`` | reference | ``typhoon.test.*`` + ``typhoon.api.hil`` patterns |
+
+## 16. DUTInterface fault injection
+
+``BaseBackend`` (``src/tools/dut/base.py``) now exposes the
+Mirim Syscon DUTInterface fault-injection API as concrete defaults
+that work uniformly across HIL / XCP / Hybrid / Mock:
+
+  - ``inject_overvoltage(level_v, ramp_time_s, target)``
+  - ``inject_undervoltage(level_v, ramp_time_s, target)``
+  - ``inject_overcurrent(target_a, ramp_time_s, load_signal)``
+  - ``inject_source_loss(target)``
+  - ``inject_sensor_fault(signal, mode, value)``  -- via XCP write
+  - ``expect_trip(fault_flag_signal, within_ms, poll_ms)`` -> bool
+  - ``is_tripped(fault_flag_signal)`` -> bool
+  - ``clear_fault(fault_flag_signal, clear_command)``
+
+Tests in ``tests/test_dut_fault_injection.py`` (15) confirm all four
+backends inherit the same surface.
+
+## 17. Downstream pytest project template
+
+``templates/downstream_pytest/conftest.py`` is a self-contained
+DUTInterface implementation (HILSimDUT + XCPDUT) for projects that
+THAA generates or operators write by hand. Copy to project root,
+add ``models/<topology>.tse``, write tests against the abstract
+``dut`` fixture, then run with ``DUT_MODE=vhil`` or ``DUT_MODE=xcp``.

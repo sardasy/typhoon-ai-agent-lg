@@ -2,7 +2,7 @@
 Node: advance_scenario
 
 Increments scenario_index and resets heal_retry_count.
-This is a thin routing node — the conditional edge after it
+This is a thin routing node -- the conditional edge after it
 checks if there are more scenarios to run.
 
 Phase 4-B: also surfaces domain transitions. When the scenario at the

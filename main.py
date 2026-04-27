@@ -846,9 +846,18 @@ def main():
                         help="Resume an existing paused thread by ID (requires --checkpoint-db)")
     parser.add_argument("--list-threads", action="store_true",
                         help="List all thread IDs in the checkpoint DB and exit")
-    parser.add_argument("--dut-backend", type=str, default="hil",
+    # DUT_MODE env var alias for --dut-backend (Mirim Syscon CLAUDE.md sec 2.1).
+    # ``DUT_MODE=vhil`` -> ``--dut-backend hil`` (VHIL is the simulator path of HIL).
+    # ``DUT_MODE=xcp``  -> ``--dut-backend xcp`` (real ECU path).
+    _dut_mode_env = os.environ.get("DUT_MODE", "").lower()
+    _dut_backend_default = {
+        "vhil": "hil", "hil": "hil", "xcp": "xcp",
+        "hybrid": "hybrid", "mock": "mock",
+    }.get(_dut_mode_env, "hil")
+    parser.add_argument("--dut-backend", type=str, default=_dut_backend_default,
                         choices=["hil", "xcp", "hybrid", "mock"],
-                        help="DUT backend (default: hil)")
+                        help="DUT backend (default: hil; "
+                             "DUT_MODE env var aliases vhil->hil)")
     parser.add_argument("--a2l-path", type=str, default="",
                         help="Path to A2L file (xcp/hybrid backends)")
     parser.add_argument("--xcp-uri", type=str, default="",
