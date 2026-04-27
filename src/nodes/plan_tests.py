@@ -17,6 +17,7 @@ import yaml
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..domain_classifier import annotate as annotate_domains, sort_by_domain
 from ..signal_validator import attach_validation
 from ..state import AgentState, make_event
 
@@ -58,6 +59,14 @@ def _load_predefined_scenarios(config_path: str) -> list[dict[str, Any]]:
             "parameters": spec.get("parameters", {}),
             "measurements": spec.get("measurements", []),
             "pass_fail_rules": spec.get("pass_fail_rules", {}),
+            # Phase 4-I: optional per-scenario device routing
+            "device_id": spec.get("device_id", "default"),
+            # P0 #3: mock-mode override -- when set, ``execute_scenario``
+            # bypasses the evaluator and forces this status. Lets a
+            # scenario library smoke-test pipeline plumbing on
+            # ``--dut-backend mock`` without expensive Claude analyze
+            # cycles on the inevitable mock-zero-stats failure.
+            "mock_expected_status": spec.get("mock_expected_status"),
         })
         priority += 1
 
@@ -91,6 +100,17 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
         # short-circuit them to ERROR without running stimulus.
         bad_count = attach_validation(predefined, signals)
 
+        # Phase 4-B: tag each scenario with its domain (bms/pcs/grid/general)
+        # and reorder so all bms come first, then pcs, then grid, then general.
+        # The single-agent graph runs them sequentially; the orchestrator graph
+        # uses these tags to route to per-domain subgraph nodes.
+        domain_counts = annotate_domains(predefined)
+        predefined = sort_by_domain(predefined)
+        # Restore monotonic priority after sort so generate_report displays
+        # in the same order LangGraph executes.
+        for i, s in enumerate(predefined, start=1):
+            s["priority"] = i
+
         # Build standard_coverage from standard_ref fields
         std_cov: dict[str, list[str]] = {}
         for s in predefined:
@@ -98,12 +118,17 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
             if ref:
                 std_cov.setdefault(ref, []).append(s["scenario_id"])
 
+        first_domain = predefined[0]["domain"] if predefined else "general"
         events = [
             make_event(
                 "plan_tests", "plan",
-                f"Loaded {len(predefined)} predefined scenarios from {config_path}",
+                f"Loaded {len(predefined)} predefined scenarios from {config_path}"
+                + " | domains: " + ", ".join(
+                    f"{d}={n}" for d, n in domain_counts.items() if n
+                ),
                 {"scenario_count": len(predefined), "source": "yaml",
-                 "validation_failures": bad_count},
+                 "validation_failures": bad_count,
+                 "domain_counts": dict(domain_counts)},
             )
         ]
         if bad_count:
@@ -123,6 +148,8 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
             "scenario_index": 0,
             "estimated_duration_s": (len(predefined) - bad_count) * 30,
             "standard_coverage": std_cov,
+            "current_domain": first_domain,
+            "domain_counts": dict(domain_counts),
             "events": events,
         }
 
@@ -169,13 +196,24 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
     # signal names occasionally, so validate before stimulus application.
     bad_count = attach_validation(scenarios, signals)
 
+    # Phase 4-B domain tagging + ordering (mirrors the predefined path).
+    domain_counts = annotate_domains(scenarios)
+    scenarios = sort_by_domain(scenarios)
+    for i, s in enumerate(scenarios, start=1):
+        s["priority"] = i
+    first_domain = scenarios[0]["domain"] if scenarios else "general"
+
     events = [
         make_event(
             "plan_tests", "plan",
             f"Plan: {len(scenarios)} scenarios, "
-            f"~{plan_data.get('estimated_duration_s', 0)}s",
+            f"~{plan_data.get('estimated_duration_s', 0)}s"
+            + " | domains: " + ", ".join(
+                f"{d}={n}" for d, n in domain_counts.items() if n
+            ),
             {"scenario_count": len(scenarios),
-             "validation_failures": bad_count},
+             "validation_failures": bad_count,
+             "domain_counts": dict(domain_counts)},
         )
     ]
     if bad_count:
@@ -194,5 +232,7 @@ async def plan_tests(state: AgentState) -> dict[str, Any]:
         "scenario_index": 0,
         "estimated_duration_s": plan_data.get("estimated_duration_s", 0),
         "standard_coverage": plan_data.get("standard_coverage", {}),
+        "current_domain": first_domain,
+        "domain_counts": dict(domain_counts),
         "events": events,
     }

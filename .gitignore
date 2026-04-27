@@ -11,3 +11,27 @@ chroma_db/
 reports/
 output/
 uploads/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Runtime: SQLite checkpoints, HITL audit JSONL
+runs/
+
+# mypy cache
+.mypy_cache/
+
+# pytest cache
+.pytest_cache/
+
+# Allure artifacts (regeneratable)
+reports/allure_results/
+reports/allure_html/
+allure-html/
+open_allure_results.cmd
+
+# User-specific model copies
+models_user/

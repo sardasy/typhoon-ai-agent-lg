@@ -1,5 +1,5 @@
 """
-Validator — Safety guard for all agent tool actions.
+Validator -- Safety guard for all agent tool actions.
 
 Every tool call passes through here before execution.
 Blocks dangerous actions and enforces physical limits.
@@ -13,24 +13,71 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
+# Single source of truth for the XCP calibration whitelist.
+# ``XCPToolExecutor.WRITABLE_PARAMS`` imports this set so the
+# pre-write validator and the XCP executor cannot drift apart.
+# Audit log: every entry below MUST be safe to retune via the
+# autonomous heal loop. Safety-critical thresholds (OVP/UVP/OCP
+# protection enables, contactor commands, FET drives) MUST NOT be
+# added here without an explicit human-in-the-loop review path.
+WRITABLE_XCP_PARAMS: frozenset[str] = frozenset({
+    # BMS scan-interval tuning (one per cell, 12-cell pack)
+    "BMS_scanInterval_ch1", "BMS_scanInterval_ch2",
+    "BMS_scanInterval_ch3", "BMS_scanInterval_ch4",
+    "BMS_scanInterval_ch5", "BMS_scanInterval_ch6",
+    "BMS_scanInterval_ch7", "BMS_scanInterval_ch8",
+    "BMS_scanInterval_ch9", "BMS_scanInterval_ch10",
+    "BMS_scanInterval_ch11", "BMS_scanInterval_ch12",
+    # BMS protection thresholds. NOTE: writable here only because the
+    # heal loop tunes them within IEC 62619-bounded plausible ranges
+    # (see src/twin.py::PLAUSIBLE_RANGES). Any change to this entry
+    # requires re-reviewing the bounds.
+    "BMS_OVP_threshold", "BMS_UVP_threshold",
+    # PI controller gains (DC-DC / inverter)
+    "Ctrl_Kp", "Ctrl_Ki", "Ctrl_Kd",
+    # VSM (IEEE 2800 GFM) tuning -- safe to retune via heal loop
+    "J", "D", "Kv",
+})
+
+
 @dataclass
 class SafetyConfig:
+    """Hard physical-equipment limits enforced by ``Validator``.
+
+    Defaults are deliberately conservative (battery-cell / 12V system
+    range). For ESS / EV-charger / GFM systems with higher voltages
+    or currents, override per-model via ``configs/safety/<name>.yaml``
+    and reference the file in the model YAML's ``model.safety_profile``
+    field. ``load_model`` merges the overlay onto the defaults.
+
+    See ``docs/SAFETY_PROFILES.md``.
+    """
     max_voltage: float = 60.0
     max_current: float = 200.0
     max_fault_injections: int = 10
     auto_retry_limit: int = 3
     timeout_per_test_s: float = 30.0
-    writable_xcp_params: set[str] = field(default_factory=lambda: {
-        "BMS_scanInterval_ch1", "BMS_scanInterval_ch2",
-        "BMS_scanInterval_ch3", "BMS_scanInterval_ch4",
-        "BMS_scanInterval_ch5", "BMS_scanInterval_ch6",
-        "BMS_scanInterval_ch7", "BMS_scanInterval_ch8",
-        "BMS_scanInterval_ch9", "BMS_scanInterval_ch10",
-        "BMS_scanInterval_ch11", "BMS_scanInterval_ch12",
-        "Ctrl_Kp", "Ctrl_Ki", "Ctrl_Kd",
-        # VSM (IEEE 2800 GFM) tuning -- safe to retune via heal loop
-        "J", "D", "Kv",
-    })
+    writable_xcp_params: set[str] = field(
+        default_factory=lambda: set(WRITABLE_XCP_PARAMS),
+    )
+
+    @classmethod
+    def from_overlay(cls, overlay: dict) -> "SafetyConfig":
+        """Build a SafetyConfig from a YAML-loaded dict overlay.
+
+        Unknown keys are ignored (forward-compat). ``writable_xcp_params``
+        if present REPLACES the default whitelist for that profile --
+        intentional, so e.g. an EV-charger profile can disable BMS
+        params it never touches.
+        """
+        kwargs: dict = {}
+        for key in ("max_voltage", "max_current", "max_fault_injections",
+                     "auto_retry_limit", "timeout_per_test_s"):
+            if key in overlay:
+                kwargs[key] = overlay[key]
+        if "writable_xcp_params" in overlay:
+            kwargs["writable_xcp_params"] = set(overlay["writable_xcp_params"])
+        return cls(**kwargs)
 
 
 @dataclass

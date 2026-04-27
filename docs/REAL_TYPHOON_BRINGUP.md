@@ -135,3 +135,133 @@ seconds.
   - Real Typhoon HIL hardware (where streaming capture should work), OR
   - The standalone pytest project under `test_project_vsm_gfm/` driven
     from inside `typhoon.test`'s native runner (different capture engine).
+
+## Bring-up checklist (Phase 4-H)
+
+Run these in order. Stop at the first failure -- later checks assume
+earlier ones pass.
+
+| # | Step | Command | Pass criterion |
+|---|------|---------|----------------|
+| 1 | Bundled Python visible | `scripts\run_with_typhoon.bat python -V` | Prints Python 3.11.4 |
+| 2 | THAA imports cleanly | `scripts\run_with_typhoon.bat python -c "import src.graph"` | Exit 0 |
+| 3 | Pre-flight (env + deps + RAG + twin) | `scripts\run_with_typhoon.bat python scripts\preflight.py` | 0 FAIL |
+| 4 | HIL device responds | `scripts\run_with_typhoon.bat python scripts\preflight.py --hil` | `hil.signals` PASS with > 30 signals |
+| 5 | Optional: A2L parses | `scripts\run_with_typhoon.bat python scripts\preflight.py --xcp --a2l-path firmware.a2l` | `xcp.a2l` PASS |
+| 6 | Single-scenario smoke | `scripts\run_with_typhoon.bat python main.py --goal "..." --config configs\scenarios.yaml` | Final report shows ≥1 PASS |
+| 7 | Multi-agent + twin smoke | `scripts\run_smoke_real.bat` (or with A2L: `scripts\run_smoke_real.bat firmware.a2l`) | Exit 0 |
+
+`--preflight` is also wired into `main.py` directly:
+
+```bash
+scripts\run_with_typhoon.bat python main.py --preflight --a2l-path firmware.a2l
+scripts\run_with_typhoon.bat python main.py --preflight --preflight-strict
+```
+
+The strict variant returns 2 on any WARN -- useful in CI before
+authorising a real-hardware run. Default (non-strict) returns 0 even
+when optional components are missing (e.g. no pyxcp installed).
+
+## Phase 4 stack on real hardware
+
+Each Phase 4 feature is independently opt-in. Recommended ramp on
+HIL404 + ECU:
+
+1. **4-A only** (`--dut-backend hil`): plain HIL run, no XCP.
+   Validates the existing single-graph flow on the device.
+2. **4-A hybrid** (`--dut-backend hybrid --a2l-path ...`): HIL plant
+   + ECU calibration via XCP. Validates the heal loop.
+3. **4-B serial multi-agent** (`--orchestrator`): adds domain
+   classification + per-agent prompts.
+4. **4-C twin** (`+ --twin`): adds simulate_fix vetoes (no-op /
+   out-of-range / wrong-direction).
+5. **4-D HITL persistence** (`+ --hitl --checkpoint-db ...`):
+   operator approval + resume across restarts.
+6. **4-E XCP DAQ** (already covered by `xcp` / `hybrid` backends; no
+   extra flag).
+7. **4-F parallel** (`--orchestrator --parallel`): concurrent
+   analyzer calls, hardware serialized by `HARDWARE_LOCK`. **Not
+   compatible with HITL / SQLite yet** -- the runner warns and runs
+   without them.
+8. **4-G domain RAG** (automatic via `load_model` once the index has
+   been built with `python scripts/index_knowledge.py`).
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `hil.load_model returned False` | Wrong `.cpd` path or device not found | Re-compile via SchematicAPI; verify `hil.set_simulation_step` runs |
+| `start_capture` raises on `trigger_type` | Old THCC version | Upgrade to 2026.1 SP1+ or pin `trigger_source/threshold/edge` |
+| `get_capture_results()` empty buffer | Trigger never fired | Use `force_polling: true` in scenario, or remove the trigger |
+| `xcp.a2l` PASS but XCP write rejected | Param not in whitelist | Add it to `XCPToolExecutor.WRITABLE_PARAMS` after safety review |
+| Heal loop never converges, twin says "uncertain" | Param has no `PLAUSIBLE_RANGES` entry | Extend `src/twin.py::PLAUSIBLE_RANGES` for that param |
+| Parallel run mixes events from different domains | Expected -- workers run concurrently | Filter on `event.data.domain` or `event.node` for per-agent view |
+| `--orchestrator --parallel --hitl` warns and skips HITL | Known limitation (Phase 4-F) | Drop `--parallel` for HITL runs; future milestone will lift this |
+
+## Multi-device HIL (Phase 4-I)
+
+The agent supports multiple physical HIL/ECU devices in one run.
+Scenarios opt in via a `device_id` field in YAML; `state["device_pool"]`
+maps each id to a per-device DUT config overlay.
+
+```yaml
+# configs/scenarios.yaml
+scenarios:
+  bms_pack_a:
+    description: BMS overvoltage on pack A
+    device_id: hil_404_a       # Phase 4-I: routes to rig A
+    parameters: {target_cell: 1, fault_voltage: 4.3, ramp_duration_s: 0.2}
+    measurements: [V_cell_1]
+    pass_fail_rules: {relay_must_trip: true}
+  bms_pack_b:
+    description: BMS overvoltage on pack B
+    device_id: hil_404_b       # ... and rig B
+    parameters: {target_cell: 1, fault_voltage: 4.3, ramp_duration_s: 0.2}
+    measurements: [V_cell_1]
+    pass_fail_rules: {relay_must_trip: true}
+```
+
+```python
+# main.py invocation (programmatic):
+from main import make_initial_state
+state = make_initial_state(
+    "Two-rig regression",
+    "configs/scenarios.yaml",
+    dut_backend="hil",
+    dut_config={"shared_setting": True},
+    device_pool={
+        "hil_404_a": {"a2l_path": "fw_a.a2l"},
+        "hil_404_b": {"a2l_path": "fw_b.a2l"},
+    },
+)
+```
+
+Scenarios with no `device_id` use `"default"` (current behavior --
+fully backward-compatible).
+
+### How it serializes
+
+`src/tools/dut/base.py::get_hardware_lock(device_id)` returns a
+distinct `asyncio.Lock` per device. Backends call `self.lock()`
+around every I/O call. Effects:
+
+- Scenarios on **different** devices: their I/O overlaps. The parallel
+  orchestrator can drive all rigs concurrently.
+- Scenarios on the **same** device: serialized. Two parallel domain
+  agents that both target `hil_404_a` queue on its lock.
+
+The legacy module-level `HARDWARE_LOCK` is preserved as the
+`"default"` device's lock so older code keeps working unchanged.
+
+### Bring-up addition
+
+After step 4 in the checklist, add a multi-device probe **only if**
+you have more than one HIL on the same host:
+
+```bash
+# Each device must respond independently. Discover them first:
+scripts\run_with_typhoon.bat python -c "import typhoon.api.hil as h; print(h.list_connected_devices())"
+```
+
+Then re-run preflight per device-id (using `--config` overlays that
+point each device at its own `.cpd` and `.a2l`).

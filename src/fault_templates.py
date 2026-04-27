@@ -389,8 +389,8 @@ async def _vsm_pref_step(hil: Any, params: dict) -> dict:
 async def _phase_jump(hil: Any, params: dict) -> dict:
     """Apply a sudden phase angle step to a 3-phase grid source.
 
-    IEEE 2800 §7.3 mandates GFM IBR survival up to ±25°. We allow the test
-    bench to push slightly beyond (±30°) for boundary characterisation, but
+    IEEE 2800 sec.7.3 mandates GFM IBR survival up to +/-25deg. We allow the test
+    bench to push slightly beyond (+/-30deg) for boundary characterisation, but
     reject anything more aggressive as it falls outside the standard scope.
     """
     signals = params.get("signal_ac_sources", [params.get("signal", "Vgrid")])
@@ -401,11 +401,11 @@ async def _phase_jump(hil: Any, params: dict) -> dict:
     post_jump_s = params.get("post_jump_s", 1.5)
     pref = params.get("Pref_w")
 
-    # IEEE 2800 §7.3 compliance band; allow small margin for boundary tests
+    # IEEE 2800 sec.7.3 compliance band; allow small margin for boundary tests
     if not (-30.0 <= phase_step_deg <= 30.0):
         raise ValueError(
-            f"phase_step_deg={phase_step_deg} outside ±30° "
-            "(IEEE 2800 §7.3 requires survival up to ±25°)"
+            f"phase_step_deg={phase_step_deg} outside +/-30deg "
+            "(IEEE 2800 sec.7.3 requires survival up to +/-25deg)"
         )
 
     if pref is not None:
@@ -448,13 +448,13 @@ FAULT_TEMPLATES["vsm_steady_state"] = FaultTemplate(
 )
 FAULT_TEMPLATES["vsm_pref_step"] = FaultTemplate(
     name="vsm_pref_step",
-    description="Apply Pref step on VSM inverter (IEEE 2800 §7.2.2).",
+    description="Apply Pref step on VSM inverter (IEEE 2800 sec.7.2.2).",
     required_params=(),
     apply=_vsm_pref_step,
 )
 FAULT_TEMPLATES["phase_jump"] = FaultTemplate(
     name="phase_jump",
-    description="Apply phase angle step to grid source (IEEE 2800 §7.3).",
+    description="Apply phase angle step to grid source (IEEE 2800 sec.7.3).",
     required_params=(),
     apply=_phase_jump,
 )

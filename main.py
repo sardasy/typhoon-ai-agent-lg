@@ -48,7 +48,16 @@ class CodegenRequest(BaseModel):
 # Initial state factory
 # ---------------------------------------------------------------------------
 
-def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> dict:
+def make_initial_state(
+    goal: str,
+    config_path: str = "configs/model.yaml",
+    *,
+    dut_backend: str = "hil",
+    dut_config: dict | None = None,
+    twin_enabled: bool = False,
+    device_pool: dict | None = None,
+    hitl_active: bool = False,
+) -> dict:
     """Create the initial AgentState dict for a graph run."""
     return {
         "goal": goal,
@@ -59,6 +68,7 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
         "device_mode": "",
         "active_preset": "",
         "rag_context": "",
+        "rag_context_by_domain": {},
         "plan_strategy": "",
         "scenarios": [],
         "scenario_index": 0,
@@ -71,6 +81,20 @@ def make_initial_state(goal: str, config_path: str = "configs/model.yaml") -> di
         "events": [],
         "report_path": "",
         "error": "",
+        # DUT abstraction (Phase 4-A) + multi-device pool (Phase 4-I)
+        "dut_backend": dut_backend,
+        "dut_config": dict(dut_config or {}),
+        "device_pool": dict(device_pool or {}),
+        # Multi-agent orchestration (Phase 4-B)
+        "current_domain": "",
+        "domain_counts": {},
+        # Digital twin (Phase 4-C)
+        "twin_enabled": twin_enabled,
+        "twin_prediction": None,
+        # Phase 4-J: HITL active flag + deferred-heal queue
+        "hitl_active": hitl_active,
+        "pending_fixes": [],
+        "pending_fix_index": 0,
         # HTAF codegen fields
         "tse_content": "",
         "tse_path": "",
@@ -93,6 +117,11 @@ async def run_cli(
     hitl: bool = False,
     checkpoint_db: str | None = None,
     resume_thread: str | None = None,
+    dut_backend: str = "hil",
+    dut_config: dict | None = None,
+    orchestrator: bool = False,
+    twin: bool = False,
+    parallel: bool = False,
 ):
     """Stream graph execution to terminal.
 
@@ -115,24 +144,65 @@ async def run_cli(
         console = None
 
     from src.graph import acompile_graph, compile_graph
+    from src.graph_orchestrator import (
+        acompile_orchestrator_graph,
+        acompile_parallel_orchestrator_graph,
+        compile_orchestrator_graph,
+        compile_parallel_orchestrator_graph,
+    )
 
     hitl_active = hitl or os.environ.get("THAA_HITL", "").lower() in ("1", "true", "yes")
     # Auto-enable HITL when resuming (resume only makes sense for paused threads)
     if resume_thread:
         hitl_active = True
 
-    # Use async compile whenever we need a SQLite-backed checkpointer so the
-    # AsyncSqliteSaver can open its aiosqlite connection inside our loop.
-    if checkpoint_db:
-        app = await acompile_graph(hitl=hitl_active, checkpoint_db=checkpoint_db)
+    if orchestrator:
+        if parallel:
+            # Phase 4-J: parallel mode now supports --hitl + --checkpoint-db.
+            # Workers diagnose in parallel (the win) and the parent
+            # drains pending_fixes serially with operator approval
+            # pausing before each ``approve_fix`` marker.
+            if checkpoint_db:
+                app = await acompile_parallel_orchestrator_graph(
+                    twin=twin, hitl=hitl_active,
+                    checkpoint_db=checkpoint_db,
+                )
+            else:
+                app = compile_parallel_orchestrator_graph(
+                    twin=twin, hitl=hitl_active,
+                )
+        elif checkpoint_db:
+            # Phase 4-D: serial orchestrator supports HITL + SQLite.
+            app = await acompile_orchestrator_graph(
+                hitl=hitl_active, checkpoint_db=checkpoint_db, twin=twin,
+            )
+        else:
+            app = compile_orchestrator_graph(hitl=hitl_active, twin=twin)
+    elif checkpoint_db:
+        # Use async compile whenever we need a SQLite-backed checkpointer so
+        # the AsyncSqliteSaver can open its aiosqlite connection inside our
+        # loop.
+        app = await acompile_graph(
+            hitl=hitl_active, checkpoint_db=checkpoint_db, twin=twin,
+        )
     else:
-        app = compile_graph(hitl=hitl_active)
+        app = compile_graph(hitl=hitl_active, twin=twin)
 
     if resume_thread:
         thread_id = resume_thread
         initial = None  # resume from checkpoint
     else:
-        initial = make_initial_state(goal, config_path)
+        # Reset the twin between independent runs so prior history /
+        # state from a previous CLI invocation doesn't bleed in.
+        if twin:
+            from src.twin import reset_twin
+            reset_twin()
+        initial = make_initial_state(
+            goal, config_path,
+            dut_backend=dut_backend, dut_config=dut_config or {},
+            twin_enabled=twin,
+            hitl_active=hitl_active,
+        )
         thread_id = f"thaa-cli-{int(datetime.datetime.now().timestamp())}"
 
     # When HITL is on we need a thread_id so the checkpointer can resume.
@@ -184,13 +254,25 @@ async def run_cli(
                 break  # graph reached END
 
             # We are paused before a node (default: apply_fix). Prompt the user.
+            scenario_at_pause = snapshot.values.get("current_scenario")
+            diagnosis_at_pause = snapshot.values.get("diagnosis")
             decision = _hitl_prompt(
                 {
                     "next": list(snapshot.next),
-                    "diagnosis": snapshot.values.get("diagnosis"),
-                    "scenario": snapshot.values.get("current_scenario"),
+                    "diagnosis": diagnosis_at_pause,
+                    "scenario": scenario_at_pause,
                 },
                 console, HAS_RICH,
+            )
+            # Phase 4-J: append every decision to the structured HITL
+            # audit trail so a regulator-grade log of safety-critical
+            # approvals exists alongside the SQLite checkpoint.
+            from src.audit import record_hitl_decision
+            record_hitl_decision(
+                thread_id=thread_id,
+                decision=decision,
+                scenario=scenario_at_pause,
+                diagnosis=diagnosis_at_pause,
             )
             if decision == "approve":
                 input_value = None  # resume
@@ -274,14 +356,70 @@ def _hitl_prompt(interrupt: dict, console, has_rich: bool) -> str:
         print(f"Confidence     : {conf:.0%}")
         print(f"Proposed action: {action} {param} = {value}\n")
 
+    # P1 #8: HITL timeout. ``THAA_HITL_TIMEOUT`` (seconds) -- when set,
+    # an unattended prompt auto-rejects rather than blocking forever.
+    # Default 0 = no timeout (legacy behavior).
+    timeout_s = 0.0
+    try:
+        timeout_s = float(os.environ.get("THAA_HITL_TIMEOUT", "0") or "0")
+    except ValueError:
+        timeout_s = 0.0
+
+    if timeout_s > 0:
+        prompt_msg = (
+            f"Approve apply_fix? [y]es / [n]o (escalate) / [a]bort "
+            f"(auto-reject in {int(timeout_s)}s): "
+        )
+    else:
+        prompt_msg = "Approve apply_fix? [y]es / [n]o (escalate) / [a]bort: "
+
     while True:
-        choice = input("Approve apply_fix? [y]es / [n]o (escalate) / [a]bort: ").strip().lower()
+        if timeout_s > 0:
+            choice = _input_with_timeout(prompt_msg, timeout_s)
+            if choice is None:
+                # Timeout fired -- log and reject for safety.
+                if has_rich:
+                    console.print("[yellow]HITL timeout -- auto-rejected[/yellow]")
+                else:
+                    print("\n[HITL timeout -- auto-rejected]")
+                return "reject"
+        else:
+            choice = input(prompt_msg)
+        choice = (choice or "").strip().lower()
         if choice in ("y", "yes"):
             return "approve"
         if choice in ("n", "no"):
             return "reject"
         if choice in ("a", "abort", "q", "quit"):
             return "abort"
+
+
+def _input_with_timeout(prompt: str, timeout_s: float) -> str | None:
+    """Cross-platform timed input. Returns None on timeout.
+
+    Uses a polling thread on Windows (no select on stdin); the
+    portable approach is sufficient for HITL approval where
+    sub-second precision doesn't matter.
+    """
+    import sys
+    import threading
+
+    print(prompt, end="", flush=True)
+    holder: list[str | None] = [None]
+
+    def _read():
+        try:
+            holder[0] = sys.stdin.readline().rstrip("\n")
+        except Exception:
+            holder[0] = None
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        # Timed out -- the daemon thread will be reaped on process exit.
+        return None
+    return holder[0]
 
 
 
@@ -708,7 +846,50 @@ def main():
                         help="Resume an existing paused thread by ID (requires --checkpoint-db)")
     parser.add_argument("--list-threads", action="store_true",
                         help="List all thread IDs in the checkpoint DB and exit")
+    # DUT_MODE env var alias for --dut-backend (Mirim Syscon CLAUDE.md sec 2.1).
+    # ``DUT_MODE=vhil`` -> ``--dut-backend hil`` (VHIL is the simulator path of HIL).
+    # ``DUT_MODE=xcp``  -> ``--dut-backend xcp`` (real ECU path).
+    _dut_mode_env = os.environ.get("DUT_MODE", "").lower()
+    _dut_backend_default = {
+        "vhil": "hil", "hil": "hil", "xcp": "xcp",
+        "hybrid": "hybrid", "mock": "mock",
+    }.get(_dut_mode_env, "hil")
+    parser.add_argument("--dut-backend", type=str, default=_dut_backend_default,
+                        choices=["hil", "xcp", "hybrid", "mock"],
+                        help="DUT backend (default: hil; "
+                             "DUT_MODE env var aliases vhil->hil)")
+    parser.add_argument("--a2l-path", type=str, default="",
+                        help="Path to A2L file (xcp/hybrid backends)")
+    parser.add_argument("--xcp-uri", type=str, default="",
+                        help="XCP transport URI (xcp/hybrid backends)")
+    parser.add_argument("--orchestrator", action="store_true",
+                        help="Run the Phase 4-B multi-agent orchestrator graph "
+                             "(BMS / PCS / Grid / general subgraphs)")
+    parser.add_argument("--twin", action="store_true",
+                        help="Phase 4-C digital twin: simulate calibration "
+                             "fixes before applying. Vetoes no-op / "
+                             "out-of-range / wrong-direction writes.")
+    parser.add_argument("--parallel", action="store_true",
+                        help="Phase 4-F: run domain agents (BMS / PCS / "
+                             "Grid / General) in parallel via Send. "
+                             "Requires --orchestrator. Hardware serialized "
+                             "by HARDWARE_LOCK. No HITL support yet.")
+    parser.add_argument("--vhil-device", type=str, default="",
+                        help="P0 #2: override VHIL device class (e.g. "
+                             "HIL606). Sets THAA_VHIL_DEVICE env var so "
+                             "load_model passes the right vhil_device "
+                             "kwarg to typhoon.api.hil.load_model().")
+    parser.add_argument("--preflight", action="store_true",
+                        help="Phase 4-H: run pre-flight environment checks "
+                             "(HIL / XCP / A2L / RAG / twin) and exit. Use "
+                             "before a real-hardware run.")
+    parser.add_argument("--preflight-strict", action="store_true",
+                        help="With --preflight, treat WARN-level results "
+                             "as failures (exit 2).")
     args = parser.parse_args()
+
+    if args.vhil_device:
+        os.environ["THAA_VHIL_DEVICE"] = args.vhil_device
 
     if args.list_threads:
         db = args.checkpoint_db or os.environ.get("THAA_CHECKPOINT_DB")
@@ -717,15 +898,36 @@ def main():
             sys.exit(1)
         sys.exit(_list_threads(db))
 
+    if args.preflight:
+        # Phase 4-H: run pre-flight checks and exit. Imports inline so
+        # the rest of the CLI doesn't pay the cost.
+        sys.path.insert(0, str(Path(__file__).parent))
+        from scripts.preflight import run_all, summarize
+        results = run_all(
+            config_path=args.config,
+            a2l_path=args.a2l_path or None,
+        )
+        sys.exit(summarize(results, strict=args.preflight_strict))
+
     if args.server:
         run_server(args.config, args.host, args.port)
     elif args.resume_thread or args.goal:
+        dut_config: dict = {}
+        if args.a2l_path:
+            dut_config["a2l_path"] = args.a2l_path
+        if args.xcp_uri:
+            dut_config["xcp_uri"] = args.xcp_uri
         asyncio.run(run_cli(
             args.goal or "",
             args.config,
             hitl=args.hitl,
             checkpoint_db=args.checkpoint_db,
             resume_thread=args.resume_thread,
+            dut_backend=args.dut_backend,
+            dut_config=dut_config,
+            orchestrator=args.orchestrator,
+            twin=args.twin,
+            parallel=args.parallel,
         ))
     else:
         parser.print_help()

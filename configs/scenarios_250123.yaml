@@ -15,6 +15,7 @@
 model:
   path: "models/250123_Test.tse"
   device: "HIL606"
+  safety_profile: ess_dc_link        # P0 #1: lift max_voltage/current for 490V battery
   timestep_us: 0.5
   grid_voltage_rms: 230
   grid_frequency_hz: 50

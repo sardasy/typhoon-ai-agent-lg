@@ -292,6 +292,16 @@ def upsert_collection(name: str, docs: list[dict], clean: bool = True) -> int:
     if not docs:
         log.info("[%s] no documents", name)
         return 0
+    # Phase 4-G: ensure every doc carries a ``domain`` tag so query-time
+    # namespace filters return the right slice. ``infer_doc_domain`` is
+    # idempotent -- if the indexer (or the source dict) already set
+    # ``metadata["domain"]``, that value wins.
+    try:
+        sys.path.insert(0, str(ROOT))
+        from src.domain_classifier import infer_doc_domain
+    except Exception:
+        infer_doc_domain = None  # type: ignore[assignment]
+
     client = _client()
     full_name = f"{COLLECTION_PREFIX}_{name}"
     if clean:
@@ -302,13 +312,24 @@ def upsert_collection(name: str, docs: list[dict], clean: bool = True) -> int:
     col = client.get_or_create_collection(name=full_name)
     ids = [d["id"] for d in docs]
     texts = [d["text"] for d in docs]
-    metas = [
-        {k: (v if isinstance(v, (str, int, float, bool)) else str(v))
-         for k, v in d.get("metadata", {}).items()} or {"_": "_"}
-        for d in docs
-    ]
+    metas: list[dict] = []
+    domain_counts: dict[str, int] = {}
+    for d in docs:
+        m = {k: (v if isinstance(v, (str, int, float, bool)) else str(v))
+             for k, v in d.get("metadata", {}).items()}
+        if "domain" not in m and infer_doc_domain is not None:
+            m["domain"] = infer_doc_domain(d.get("text", ""), m)
+        if not m:
+            m = {"_": "_"}
+        metas.append(m)
+        dom = m.get("domain", "general")
+        domain_counts[dom] = domain_counts.get(dom, 0) + 1
     col.add(ids=ids, documents=texts, metadatas=metas)
-    log.info("[%s] indexed %d documents (collection=%s)", name, len(docs), full_name)
+    breakdown = ", ".join(f"{d}={n}" for d, n in sorted(domain_counts.items()))
+    log.info(
+        "[%s] indexed %d documents (collection=%s) | %s",
+        name, len(docs), full_name, breakdown,
+    )
     return len(docs)
 
 
@@ -340,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         docs = SOURCES[src]()
         log.info("collected %d docs for '%s'", len(docs), src)
         total += upsert_collection(src, docs, clean=args.clean)
-    log.info("DONE — %d documents indexed under %s", total, CHROMA_DIR)
+    log.info("DONE -- %d documents indexed under %s", total, CHROMA_DIR)
     return 0
 
 

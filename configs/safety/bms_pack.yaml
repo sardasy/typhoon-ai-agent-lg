@@ -1,0 +1,12 @@
+# Safety profile: BMS pack (12-cell Li-ion, 50V system)
+#
+# Used by: configs/scenarios.yaml (BMS 12S pack)
+# Reference this file from a model.yaml as:
+#   model:
+#     safety_profile: bms_pack
+
+max_voltage: 60.0
+max_current: 200.0
+max_fault_injections: 10
+auto_retry_limit: 3
+timeout_per_test_s: 30.0

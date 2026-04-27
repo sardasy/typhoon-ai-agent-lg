@@ -1,0 +1,16 @@
+# Safety profile: VSM GFM inverter
+# 230V_LL grid, ~325Vpeak phase voltage, ~30A peak phase current
+#
+# Used by: configs/scenarios_vsm_gfm.yaml (IEEE 2800 GFM 23 scenarios)
+# Reference from model.yaml as:
+#   model:
+#     safety_profile: vsm_gfm
+
+# Peak phase voltage * margin for transient overshoot
+max_voltage: 600.0
+# Phase current peak (typ. 5kW at 230V_LL ~= 18A peak)
+max_current: 50.0
+
+max_fault_injections: 15
+auto_retry_limit: 3
+timeout_per_test_s: 45.0

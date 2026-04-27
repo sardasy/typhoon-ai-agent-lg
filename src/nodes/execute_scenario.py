@@ -13,8 +13,10 @@ from typing import Any
 
 from ..evaluator import evaluate as evaluate_rules
 from ..fault_templates import get_template, validate_params
+from ..heartbeat import beat as _heartbeat
+from ..liveness import observe as _liveness_observe
 from ..state import AgentState, ScenarioResult, WaveformStats, make_event
-from .load_model import get_hil
+from .load_model import get_dut
 
 logger = logging.getLogger(__name__)
 
@@ -60,33 +62,80 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
                                    result.model_dump())],
         }
 
-    hil = get_hil()
+    # Phase 4-I: per-scenario device routing. Scenarios with no
+    # ``device_id`` field hit the same default backend as before.
+    # P0 #3: when running on the mock DUT and the scenario YAML pinned
+    # ``mock_expected_status``, short-circuit to that status without
+    # invoking stimulus / capture / evaluator. Saves Claude tokens on
+    # smoke-test runs of large scenario libraries.
+    if state.get("dut_backend") == "mock":
+        forced = scenario.get("mock_expected_status")
+        if forced in ("pass", "fail", "error", "skipped"):
+            forced_result = ScenarioResult(
+                scenario_id=sid, status=forced,
+                duration_s=0.0, waveform_stats=[],
+                fail_reason="" if forced == "pass" else "mock_expected_status override",
+                retry_count=state.get("heal_retry_count", 0),
+            )
+            return {
+                "current_scenario": scenario,
+                "results": [forced_result.model_dump()],
+                "diagnosis": None,
+                "events": [make_event(
+                    "execute", "result",
+                    f"{forced.upper()}: {name} (mock_expected_status override)",
+                    forced_result.model_dump(),
+                )],
+            }
+
+    dut = get_dut(state, scenario=scenario)
     t0 = time.time()
 
     try:
         # 1. Apply stimulus
-        await _apply_stimulus(hil, params)
+        await _apply_stimulus(dut, params)
 
         # 2. Capture waveforms
         duration = max(
             params.get("ramp_duration_s", 0) + params.get("hold_duration_s", 0) + 0.2,
             0.5,
         )
-        cap_kwargs = {
-            "signals": measurements,
-            "duration_s": duration,
-            "analysis": ["mean", "max", "min", "rms",
-                         "overshoot", "rise_time", "settling_time",
-                         "thd", "rocof"],
-        }
+        analysis = ["mean", "max", "min", "rms",
+                    "overshoot", "rise_time", "settling_time",
+                    "thd", "rocof"]
+        extra: dict = {}
         # Pass through optional capture-tuning params from the scenario
         for k in ("heal_target_param", "heal_target_threshold",
                   "rate_hz", "force_polling",
                   "trigger_source", "trigger_threshold", "trigger_edge",
                   "trigger_timeout_s"):
             if k in params:
-                cap_kwargs[k] = params[k]
-        cap_result = await hil.execute("hil_capture", cap_kwargs)
+                extra[k] = params[k]
+        cap_result = await dut.capture(
+            measurements, duration, analysis=analysis, **extra,
+        )
+        # P1 #10: liveness probe -- 3 consecutive flatlined captures
+        # on a real-hardware backend abort the run.
+        live_alert, live_reason = _liveness_observe(
+            getattr(dut, "name", "?"),
+            cap_result.get("statistics", []) if isinstance(cap_result, dict) else [],
+        )
+        if live_alert:
+            return {
+                "current_scenario": scenario,
+                "results": [ScenarioResult(
+                    scenario_id=sid, status="error",
+                    duration_s=round(time.time() - t0, 3),
+                    waveform_stats=[], fail_reason=live_reason,
+                    retry_count=state.get("heal_retry_count", 0),
+                ).model_dump()],
+                "diagnosis": None,
+                "error": live_reason,
+                "events": [make_event(
+                    "execute", "error",
+                    f"LIVENESS ALERT: {live_reason}",
+                )],
+            }
         if "error" in cap_result:
             # Real-mode capture failure: do NOT fall back to PASS
             status, fail_reason = "error", f"capture failed: {cap_result['error']}"
@@ -108,9 +157,10 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
         stats = []
 
     elapsed = time.time() - t0
+    # Pydantic validates ``status`` against the Literal in ScenarioResult.
     result = ScenarioResult(
         scenario_id=sid,
-        status=status,
+        status=status,  # type: ignore[arg-type]
         duration_s=round(elapsed, 3),
         waveform_stats=stats,
         fail_reason=fail_reason,
@@ -120,8 +170,13 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
     status_label = status.upper()
     msg = f"{status_label}: {name}"
     if fail_reason:
-        msg += f" — {fail_reason}"
+        msg += f" -- {fail_reason}"
 
+    _heartbeat(node="execute_scenario", state={
+        **state,
+        "current_scenario": scenario,
+        "results": [*state.get("results", []), result.model_dump()],
+    })
     return {
         "current_scenario": scenario,
         "results": [result.model_dump()],
@@ -132,8 +187,14 @@ async def execute_scenario(state: AgentState) -> dict[str, Any]:
 
 # ----- Helpers -----
 
-async def _apply_stimulus(hil, params: dict):
-    """Apply test stimulus (ramp, step, fault) based on parameters."""
+async def _apply_stimulus(dut, params: dict):
+    """Apply test stimulus (ramp, step, fault) based on parameters.
+
+    ``dut`` is any object with an ``execute(tool_name, tool_input)`` method --
+    a DUTBackend (preferred) or, for backward compatibility, a raw
+    HILToolExecutor. Fault templates use the same surface, so they keep
+    working unchanged.
+    """
     import asyncio
 
     # Preferred path: declarative fault template.
@@ -147,7 +208,7 @@ async def _apply_stimulus(hil, params: dict):
             raise ValueError(
                 f"fault_template={template_name} missing params: {missing}"
             )
-        await template.apply(hil, params)
+        await template.apply(dut, params)
         return
 
     if "target_cell" in params:
@@ -161,9 +222,9 @@ async def _apply_stimulus(hil, params: dict):
         normal = params.get("normal_voltage", 3.6)
         fault = params["fault_voltage"]
         dur = params.get("ramp_duration_s", 0.2)
-        await hil.execute("hil_signal_write", {"signal": signal, "value": normal})
+        await dut.execute("hil_signal_write", {"signal": signal, "value": normal})
         await asyncio.sleep(0.05)
-        await hil.execute("hil_signal_write", {
+        await dut.execute("hil_signal_write", {
             "signal": signal, "waveform": "ramp",
             "start_value": normal, "end_value": fault, "duration_s": dur,
         })
@@ -172,13 +233,13 @@ async def _apply_stimulus(hil, params: dict):
     elif "test_voltage" in params and signal:
         v = params["test_voltage"]
         hold = params.get("hold_duration_s", 1.0)
-        await hil.execute("hil_signal_write", {"signal": signal, "value": v})
+        await dut.execute("hil_signal_write", {"signal": signal, "value": v})
         await asyncio.sleep(hold)
 
     elif "target_cells" in params:
         for cell in params["target_cells"]:
             sig = f"V_cell_{cell}"
-            await hil.execute("hil_signal_write", {
+            await dut.execute("hil_signal_write", {
                 "signal": sig, "waveform": "ramp",
                 "start_value": params.get("normal_voltage", 3.6),
                 "end_value": params.get("fault_voltage", 4.5),
@@ -187,7 +248,7 @@ async def _apply_stimulus(hil, params: dict):
         await asyncio.sleep(params.get("ramp_duration_s", 0.2) + 0.05)
 
     elif "fault_type" in params:
-        await hil.execute("hil_fault_inject", {
+        await dut.execute("hil_fault_inject", {
             "fault_type": params["fault_type"],
             "target": params.get("target_sensor", ""),
             "parameters": params,

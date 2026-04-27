@@ -1,5 +1,5 @@
 """
-LangGraph State — the single TypedDict that flows through every node.
+LangGraph State -- the single TypedDict that flows through every node.
 
 Design principle: Each node reads what it needs, writes what it produces.
 LangGraph merges partial returns into the running state automatically.
@@ -33,6 +33,14 @@ class ScenarioSpec(BaseModel):
     measurements: list[str] = Field(default_factory=list)
     pass_fail_rules: dict[str, Any] = Field(default_factory=dict)
     depends_on: str | None = None
+    # Phase 4-B: which domain agent owns this scenario.
+    # Set automatically by ``plan_tests`` via ``domain_classifier.annotate``.
+    # Values: "bms" | "pcs" | "grid" | "general"
+    domain: str = "general"
+    # Phase 4-I: which physical device runs this scenario. Resolved
+    # against ``state.device_pool`` at execute time. ``"default"``
+    # keeps single-device behavior unchanged.
+    device_id: str = "default"
 
 
 class WaveformStats(BaseModel):
@@ -146,6 +154,13 @@ class AgentState(TypedDict):
 
     # --- RAG context (set by load_model) ---
     rag_context: str
+    # rag_context_by_domain: per-domain RAG snippets (Phase 4-G).
+    # Keys: "bms" | "pcs" | "grid" | "general". Populated by
+    # ``load_model`` via four namespace-filtered ``rag_query`` calls.
+    # ``analyze_failure`` reads the entry for the failed scenario's
+    # domain and falls back to ``rag_context`` (the global pull) when
+    # the namespace is empty.
+    rag_context_by_domain: dict
 
     # --- Plan (set by plan_tests) ---
     plan_strategy: str
@@ -171,7 +186,79 @@ class AgentState(TypedDict):
     # --- Control ---
     error: str                                       # non-empty = abort
 
-    # --- HTAF Code Generation (set by codegen pipeline) ---
+    # --- Multi-agent orchestration (Phase 4-B) ---
+    # current_domain: which domain "agent" is processing the scenario at
+    # ``scenario_index``. Set by ``classify_domains`` (or by ``plan_tests``
+    # when running under the orchestrator). Read by ``analyze_failure`` to
+    # overlay domain-specific guidance on the analyzer prompt, and by
+    # ``execute_scenario`` to tag events.
+    current_domain: str
+    # domain_counts: per-domain scenario count, e.g. {"bms": 3, "grid": 5}.
+    # Populated by ``plan_tests`` after classification. Read-only thereafter.
+    domain_counts: dict
+
+    # --- Phase 4-J: HITL active flag (read by parallel workers) ---
+    # Parallel workers branch on this: when True they defer heals to
+    # the parent's serial replay loop instead of applying inline.
+    # Set by ``main.make_initial_state`` based on the ``--hitl`` /
+    # ``THAA_HITL`` resolution; read by ``parallel_agents``.
+    hitl_active: bool
+
+    # --- Phase 4-J: parallel-mode HITL deferred heal queue ---
+    # When the parallel orchestrator runs with --hitl, workers do NOT
+    # apply fixes inline. Instead they append (scenario, diagnosis)
+    # candidates here and the parent graph drains the queue serially
+    # with operator approval between each commit.
+    #
+    # ``pending_fixes`` uses the operator.add reducer so each worker's
+    # append merges into the parent state without races.
+    # ``pending_fix_index`` is the read-cursor; ``next_pending_fix``
+    # advances it just like ``scenario_index`` for the main loop.
+    pending_fixes: Annotated[list[dict], operator.add]
+    pending_fix_index: int
+
+    # --- Digital twin (Phase 4-C) ---
+    # twin_enabled: when True, the graph routes through ``simulate_fix``
+    # before ``apply_fix``. The twin can veto no-op / out-of-range /
+    # wrong-direction calibration writes so the agent doesn't burn a heal
+    # retry on a clearly-bad change.
+    twin_enabled: bool
+    # twin_prediction: last :class:`src.twin.TwinPrediction` as a dict.
+    # Set by ``simulate_fix``; read by the conditional edge that routes
+    # to either ``apply_fix`` (commit) or ``advance_scenario`` (veto).
+    twin_prediction: dict | None
+
+    # --- Per-model safety overlay (P0 #1) ---
+    # Loaded from ``configs/safety/<profile>.yaml`` when the run config's
+    # ``model.safety_profile`` field is set. ``apply_fix`` builds a
+    # ``Validator`` from this overlay so e.g. an ESS run can lift
+    # ``max_voltage`` to 900V without forking the codebase.
+    safety_config: dict
+
+    # --- DUT abstraction (Phase 4-A) ---
+    # dut_backend: which backend execute_scenario / apply_fix route through.
+    #   "hil"    -- Typhoon HIL only (default, current behavior)
+    #   "xcp"    -- Real ECU only via pyXCP (calibration-only, no stimulus/capture)
+    #   "hybrid" -- HIL stimulus + capture, XCP calibration write
+    #   "mock"   -- In-memory backend for tests
+    # Read by load_model (instantiates backend) and propagated through state.
+    dut_backend: str
+    # dut_config: backend-specific options, e.g. {"a2l_path": "...", "xcp_uri": "..."}
+    dut_config: dict
+    # Phase 4-I: device_pool maps device_id -> per-device dut_config
+    # overlay. ``execute_scenario`` reads ``scenario["device_id"]``,
+    # picks the matching overlay, and merges it on top of ``dut_config``
+    # before instantiating the backend. ``"default"`` is implicit and
+    # uses ``dut_config`` as-is when this dict is empty.
+    device_pool: dict
+
+    # --- HTAF Code Generation (used ONLY by ``src/graph_codegen.py``) ---
+    # These fields are kept on ``AgentState`` for backward compatibility
+    # with ``main.make_initial_state`` (one factory, both pipelines).
+    # New code targeting only the codegen pipeline should accept
+    # :class:`CodegenState` instead -- it carries just the keys the
+    # codegen nodes actually read/write, so node signatures stay
+    # honest.
     tse_content: str                                 # uploaded .tse file content
     tse_path: str                                    # original file path/name
     parsed_tse: dict | None                          # ParsedTSE as dict
@@ -180,6 +267,37 @@ class AgentState(TypedDict):
     codegen_validation: dict | None                  # CodegenValidationResult dict
     export_path: str                                 # path to exported test suite
     codegen_mode: str                                # "mock" or "typhoon"
+
+
+# ---------------------------------------------------------------------------
+# Codegen-only state (sibling of AgentState, sees only codegen fields)
+# ---------------------------------------------------------------------------
+
+class CodegenState(TypedDict, total=False):
+    """State for the HTAF codegen pipeline (``src/graph_codegen.py``).
+
+    A scoped slice of the verify-pipeline ``AgentState`` -- carries
+    only the keys the five codegen nodes (parse_tse, map_requirements,
+    generate_tests, validate_code, export_tests) actually read or
+    write. Use this as the type hint for codegen nodes so signatures
+    don't lie about what they touch.
+
+    ``total=False`` because the pipeline accepts a partial dict and
+    fills the rest as it runs. Runtime is just a dict, so an
+    ``AgentState`` value still satisfies ``CodegenState`` -- no
+    migration needed for callers that already pass ``AgentState``.
+    """
+    tse_content: str
+    tse_path: str
+    parsed_tse: dict | None
+    test_requirements: list[dict]
+    generated_files: dict[str, str]
+    codegen_validation: dict | None
+    export_path: str
+    codegen_mode: str
+    # Shared with AgentState: every node still appends to events.
+    events: Annotated[list[dict], operator.add]
+    error: str
 
 
 def make_event(
