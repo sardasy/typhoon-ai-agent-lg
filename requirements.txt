@@ -36,3 +36,6 @@ weasyprint>=61.0
 rich>=13.0
 httpx>=0.27
 python-dotenv>=1.0
+
+# MCP server (PoC -- expose THAA pipeline as MCP tools)
+mcp[cli]>=1.0
