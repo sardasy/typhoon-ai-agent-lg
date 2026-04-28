@@ -20,6 +20,11 @@ loop and HITL approval flow.
 | `resume_hitl_run(thread_id, decision, checkpoint_db)` | Resume a paused thread (`approve` / `reject`) |
 | `list_threads(checkpoint_db)` | List paused threads in a SQLite checkpoint DB |
 | `generate_pytest_from_tse(tse_path?, tse_content?, mode?)` | HTAF codegen: .tse model -> pytest suite (returns generated file list + ZIP path) |
+| `rag_query(query, sources?, top_k?)` | Search knowledge base (ChromaDB primary, Qdrant fallback, mock KB last). Read-only. |
+| `list_reports()` | List HTML verification reports under `reports/`, newest first |
+| `get_report(filename, max_bytes?)` | Fetch the HTML body of a specific report (with truncation guard) |
+| `hil_status()` | Read-only snapshot of `HILToolExecutor`: model loaded, sim running, signals, snapshots |
+| `xcp_read_params(param_names, a2l_path?)` | Read XCP parameters from connected ECU. **Read-only** -- writes blocked by design. Also reports recent `apply_fix` writes for debugging. |
 
 The whole self-healing loop (analyze -> apply_fix -> retry, MAX_HEAL_RETRIES,
 safety validator) lives inside `run_verification` / `start_hitl_run`; the

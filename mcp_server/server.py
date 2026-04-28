@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sqlite3
 import sys
 import uuid
@@ -40,6 +41,9 @@ except ImportError as exc:
 
 from src.graph import acompile_graph  # noqa: E402  -- after sys.path tweak
 from src.graph_codegen import compile_codegen_graph  # noqa: E402
+from src.nodes.apply_fix import get_xcp  # noqa: E402
+from src.nodes.load_model import get_hil, get_rag  # noqa: E402
+from src.tools.xcp_tools import LAST_XCP_WRITE  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -358,6 +362,169 @@ def list_threads(checkpoint_db: str) -> list[dict[str, Any]]:
         {"thread_id": tid, "last_checkpoint_id": last, "checkpoint_count": n}
         for tid, last, n in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Read-only introspection tools (no state changes, safe to call any time)
+# ---------------------------------------------------------------------------
+
+_REPORT_PATTERN = re.compile(r"^report_\d{8}_\d{6}\.html$")
+
+
+@mcp.tool()
+async def rag_query(
+    query: str,
+    sources: list[str] | None = None,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Search the THAA knowledge base for relevant documents.
+
+    Wraps ``RAGToolExecutor`` (ChromaDB primary, Qdrant fallback, mock KB
+    last). Useful for pulling standards excerpts, API docs, or past test
+    history into a planning prompt without invoking the full
+    verification pipeline.
+
+    Args:
+        query: Search string.
+        sources: Subset of ``["api_docs", "standards", "test_history",
+            "datasheets"]``. Defaults to all except ``datasheets``.
+        top_k: Maximum results to return (default 5).
+    """
+    if sources is None:
+        sources = ["api_docs", "standards", "test_history"]
+    rag = get_rag()
+    result = await rag.execute(
+        "rag_query", {"query": query, "sources": sources, "top_k": top_k}
+    )
+    # Normalize the shape so the caller always sees {query, results: [...]}.
+    if "results" not in result:
+        result = {"query": query, "results": [], "raw": result}
+    return result
+
+
+@mcp.tool()
+def list_reports() -> list[dict[str, Any]]:
+    """List HTML verification reports under ``reports/``.
+
+    Returns most recent first. Each entry has ``filename``, ``timestamp``
+    (formatted from the filename), and ``size_bytes``. Use the filename
+    with ``get_report`` to fetch the HTML body.
+    """
+    reports_dir = _ROOT / "reports"
+    if not reports_dir.is_dir():
+        return []
+    out = []
+    for f in sorted(reports_dir.iterdir(), reverse=True):
+        if f.suffix != ".html" or not _REPORT_PATTERN.match(f.name):
+            continue
+        ts_part = f.name.removeprefix("report_").removesuffix(".html")
+        ts_fmt = ""
+        if len(ts_part) == 15:
+            ts_fmt = (
+                f"{ts_part[:4]}-{ts_part[4:6]}-{ts_part[6:8]} "
+                f"{ts_part[9:11]}:{ts_part[11:13]}:{ts_part[13:15]}"
+            )
+        out.append({
+            "filename": f.name,
+            "timestamp": ts_fmt,
+            "size_bytes": f.stat().st_size,
+        })
+    return out
+
+
+@mcp.tool()
+def get_report(filename: str, max_bytes: int = 200_000) -> dict[str, Any]:
+    """Fetch the HTML body of a specific report file.
+
+    The filename must match ``report_YYYYMMDD_HHMMSS.html``. Files
+    larger than ``max_bytes`` are truncated and ``truncated=True`` is
+    flagged so the caller knows to fetch the remainder via filesystem
+    if needed.
+    """
+    if not _REPORT_PATTERN.match(filename):
+        return {"error": f"Invalid report filename: {filename!r}"}
+    path = _ROOT / "reports" / filename
+    if not path.is_file():
+        return {"error": f"Report not found: {filename}"}
+    raw = path.read_bytes()
+    truncated = len(raw) > max_bytes
+    body = raw[:max_bytes].decode("utf-8", errors="replace")
+    return {
+        "filename": filename,
+        "size_bytes": len(raw),
+        "truncated": truncated,
+        "html": body,
+    }
+
+
+@mcp.tool()
+async def hil_status() -> dict[str, Any]:
+    """Read-only snapshot of the HIL device executor state.
+
+    Reports whether a model is loaded, whether simulation is running,
+    the model path, the discovered signal count, and the first 30
+    signal names. Reads the same singleton ``HILToolExecutor`` that
+    the running graph uses, so the answer reflects current runtime
+    state -- not just default values.
+    """
+    hil = get_hil()
+    base = await hil.execute("hil_control", {"action": "status"})
+    return {
+        **base,
+        "signal_count": len(hil.signals),
+        "signal_names_preview": hil.signals[:30],
+        "snapshot_count": len(hil.snapshots),
+    }
+
+
+@mcp.tool()
+async def xcp_read_params(
+    param_names: list[str],
+    a2l_path: str | None = None,
+) -> dict[str, Any]:
+    """Read one or more XCP parameters from the connected ECU.
+
+    Strictly read-only -- writes are blocked by the existing whitelist
+    in ``XCPToolExecutor`` and are not exposed via MCP at all. If the
+    executor is not yet connected and ``a2l_path`` is provided, this
+    tool will connect first; otherwise it returns the connection error
+    along with whatever was last written by ``apply_fix`` (so the
+    caller still gets useful state).
+
+    Returns a dict with ``values`` (name -> read result) and
+    ``last_writes`` (recent writes by the heal loop, for debugging).
+    """
+    xcp = get_xcp()
+    connect_error: str | None = None
+
+    if not xcp.connected:
+        if a2l_path:
+            conn_result = await xcp.execute(
+                "xcp_interface", {"action": "connect", "a2l_path": a2l_path}
+            )
+            if conn_result.get("error"):
+                connect_error = conn_result["error"]
+        else:
+            connect_error = (
+                "Not connected to XCP. Pass a2l_path to auto-connect, "
+                "or call connect via the verification pipeline first."
+            )
+
+    values: dict[str, Any] = {}
+    if not connect_error:
+        for name in param_names:
+            r = await xcp.execute(
+                "xcp_interface", {"action": "read", "variable": name}
+            )
+            values[name] = r.get("value") if "value" in r else r
+
+    return {
+        "connected": xcp.connected,
+        "a2l_path": xcp.a2l_path,
+        "values": values,
+        "last_writes": dict(LAST_XCP_WRITE),
+        "connect_error": connect_error,
+    }
 
 
 # ---------------------------------------------------------------------------

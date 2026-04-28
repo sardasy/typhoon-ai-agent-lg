@@ -39,12 +39,19 @@ async def main() -> int:
             tool_names = [t.name for t in tools_resp.tools]
             print(f"[smoke] tools/list ({len(tool_names)}): {tool_names}")
             expected = {
+                # Verification + codegen
                 "list_scenario_libraries",
                 "run_verification",
                 "start_hitl_run",
                 "resume_hitl_run",
                 "list_threads",
                 "generate_pytest_from_tse",
+                # Read-only introspection
+                "rag_query",
+                "list_reports",
+                "get_report",
+                "hil_status",
+                "xcp_read_params",
             }
             missing = expected - set(tool_names)
             if missing:
@@ -73,6 +80,40 @@ async def main() -> int:
             if len(libraries) < 1 or "scenarios_count" not in libraries[0]:
                 print("[smoke] FAIL -- unexpected payload shape")
                 return 1
+
+            # Round-trip the new read-only introspection tools (no API key
+            # required; mock paths kick in for hil/xcp when hardware absent).
+            checks = [
+                ("hil_status", {}, ("model_loaded",)),
+                ("list_reports", {}, None),  # may legitimately be empty
+                ("rag_query",
+                 {"query": "BMS overvoltage protection threshold",
+                  "sources": ["standards"], "top_k": 2},
+                 ("results",)),
+                ("xcp_read_params",
+                 {"param_names": ["BMS_OVP_threshold"]},
+                 ("connected",)),
+            ]
+            for name, args, required_keys in checks:
+                resp = await session.call_tool(name, args)
+                if resp.isError:
+                    print(f"[smoke] FAIL -- {name} returned error: {resp.content}")
+                    return 1
+                blocks = [b for b in resp.content if getattr(b, "type", "") == "text"]
+                # FastMCP encodes an empty list as zero text blocks; that's
+                # legal. Only require content when the contract demands keys.
+                if required_keys and not blocks:
+                    print(f"[smoke] FAIL -- {name} returned no text content")
+                    return 1
+                first = json.loads(blocks[0].text) if blocks else None
+                if required_keys and isinstance(first, dict):
+                    missing_keys = [k for k in required_keys if k not in first]
+                    if missing_keys:
+                        print(f"[smoke] FAIL -- {name} missing keys {missing_keys}")
+                        return 1
+                shape = type(first).__name__ if first is not None else "empty"
+                print(f"[smoke] {name} OK -> {shape} "
+                      f"({len(blocks)} block{'s' if len(blocks) != 1 else ''})")
             print("[smoke] OK")
             return 0
 

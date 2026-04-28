@@ -41,8 +41,8 @@ ones.** Stateful primitives stay inside LangGraph; the MCP host picks
 | `POST /api/run` | `RunRequest{goal}` | `run_verification(goal, config_path?)` | :white_check_mark: |
 | `POST /api/generate-tests` | `CodegenRequest{tse_content, tse_path, mode}` | `generate_pytest_from_tse(...)` | :white_check_mark: |
 | `POST /api/upload-tse` | multipart `.tse` | (subsumed -- pass `tse_content` arg directly) | :no_entry: |
-| `GET  /api/reports` | -- | `list_reports()` | :small_blue_diamond: ~30 LOC |
-| `GET  /api/reports/{filename}` | filename | `get_report(filename)` -> HTML string, OR MCP `resource://reports/{filename}` | :small_blue_diamond: ~30 LOC |
+| `GET  /api/reports` | -- | `list_reports()` | :white_check_mark: |
+| `GET  /api/reports/{filename}` | filename | `get_report(filename, max_bytes?)` -> HTML body + truncation flag | :white_check_mark: |
 | `GET  /api/download-tests/{filename}` | filename | `download_test_zip(filename)` -> bytes (base64), OR MCP `resource://generated_tests/{filename}` | :small_blue_diamond: |
 | `GET  /api/graph` | -- | `get_graph_diagram()` -> Mermaid string | :small_blue_diamond: |
 | `GET  /api/health` | -- | (skip -- MCP `initialize` already covers this) | :no_entry: |
@@ -59,7 +59,7 @@ ones.** Stateful primitives stay inside LangGraph; the MCP host picks
 
 | Capability today | MCP target | Status |
 |---|---|---|
-| `RAGToolExecutor.execute("rag_query", {query, sources, top_k})` | `rag_query(query, sources?, top_k?)` -> list of `{text, source, score}` | :small_blue_diamond: ~20 LOC |
+| `RAGToolExecutor.execute("rag_query", {query, sources, top_k})` | `rag_query(query, sources?, top_k?)` -> `{query, results: [{text, source, score}, ...]}` | :white_check_mark: |
 
 **Backends present in this repo:**
 - ChromaDB (primary, `chroma_db/` PersistentClient)
@@ -95,8 +95,8 @@ ones.** Stateful primitives stay inside LangGraph; the MCP host picks
 
 | Tool | Use case | Status |
 |---|---|---|
-| `hil_status()` -> `{model_loaded, simulation_running, signals[], device_mode}` | "Is the HIL ready?" | :small_blue_diamond: ~15 LOC |
-| `xcp_read_params(param_names: list[str])` -> `{name: value}` | Inspect ECU calibration without writing | :small_blue_diamond: ~25 LOC, **read-only**, no whitelist needed |
+| `hil_status()` -> `{model_loaded, simulation_running, signal_count, signal_names_preview, snapshot_count}` | "Is the HIL ready?" | :white_check_mark: |
+| `xcp_read_params(param_names, a2l_path?)` -> `{values, last_writes, connected, connect_error}` | Inspect ECU calibration without writing; also exposes recent `apply_fix` writes for debugging | :white_check_mark: read-only, no whitelist gate needed |
 
 **SCPI / TCP.** Not present in this repo. The Typhoon HIL API
 (`set_scada_input_value`, `set_source_*`, `read_analog_signal`)
@@ -129,19 +129,17 @@ external instruments (e.g. Chroma sources, Yokogawa scopes), that is a
 
 ---
 
-## Priority queue (next 4 cheap adds)
+## Priority queue (next 4 cheap adds) -- DONE
 
-Based on value/cost ratio, in order:
+All 4 read-only adds shipped together with the original PoC:
 
-1. **`rag_query`** -- 20 LOC, immediate orchestrator unlock, no state issues
-2. **`list_reports` + `get_report`** -- 60 LOC together, lets the LLM
-   summarize past runs without re-running them
-3. **`hil_status`** -- 15 LOC, lets the LLM diagnose "why is verification
-   slow" without invoking a full run
-4. **`xcp_read_params`** -- 25 LOC, debug calibration without write risk
+1. :white_check_mark: **`rag_query`** -- orchestrator pulls KB context without invoking the pipeline
+2. :white_check_mark: **`list_reports` + `get_report`** -- summarize past runs without re-running
+3. :white_check_mark: **`hil_status`** -- "Is the HIL ready?" without a full run
+4. :white_check_mark: **`xcp_read_params`** -- debug calibration; **writes intentionally not exposed**
 
-Total: ~120 LOC, ~half a day. Would bring tool count from 6 to 10 and
-cover everything **read-only** in the asset list.
+Tool count: **6 -> 11**. Read-only surface coverage of the asset list:
+complete.
 
 ## Don't expose (and why)
 
@@ -158,13 +156,18 @@ cover everything **read-only** in the asset list.
 
 ---
 
-## Appendix: today's MCP tool surface (6 tools)
+## Appendix: today's MCP tool surface (11 tools)
 
-| Tool | File ref |
+| Tool | Notes |
 |---|---|
-| `list_scenario_libraries()` | `mcp_server/server.py` |
+| `list_scenario_libraries()` | `configs/scenarios*.yaml` inventory |
 | `run_verification(goal, config_path?)` | wraps `acompile_graph` |
 | `start_hitl_run(goal, checkpoint_db, config_path?)` | wraps `acompile_graph(hitl=True)` |
 | `resume_hitl_run(thread_id, decision, checkpoint_db)` | uses `app.aupdate_state` |
 | `list_threads(checkpoint_db)` | reads SqliteSaver DB directly |
 | `generate_pytest_from_tse(tse_path?, tse_content?, mode?)` | wraps `compile_codegen_graph` |
+| `rag_query(query, sources?, top_k?)` | wraps `RAGToolExecutor.execute("rag_query", ...)` |
+| `list_reports()` | scans `reports/`; matches `report_YYYYMMDD_HHMMSS.html` |
+| `get_report(filename, max_bytes?)` | reads HTML body; truncates large files with flag |
+| `hil_status()` | calls `hil_control` action=status, plus signal preview |
+| `xcp_read_params(param_names, a2l_path?)` | calls `xcp_interface` action=read; auto-connect option; exposes `LAST_XCP_WRITE` |
