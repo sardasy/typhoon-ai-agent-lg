@@ -1,5 +1,5 @@
 """
-Reporter — generates test reports from state data.
+Reporter -- generates test reports from state data.
 """
 
 from __future__ import annotations

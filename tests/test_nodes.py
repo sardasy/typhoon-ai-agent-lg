@@ -1,7 +1,7 @@
 """
 Node-level unit tests for plan_tests, analyze_failure, generate_report.
 
-Claude API is fully mocked — no ANTHROPIC_API_KEY needed.
+Claude API is fully mocked -- no ANTHROPIC_API_KEY needed.
 Run: pytest tests/test_nodes.py -v
 """
 

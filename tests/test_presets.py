@@ -20,7 +20,7 @@ PRESETS_PATH = str(REPO_ROOT / "configs" / "model_presets.yaml")
 
 @pytest.fixture(autouse=True)
 def _clear_preset_cache():
-    # lru_cache on load_presets — clear between tests.
+    # lru_cache on load_presets -- clear between tests.
     load_presets.cache_clear()
     yield
     load_presets.cache_clear()

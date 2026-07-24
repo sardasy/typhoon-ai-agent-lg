@@ -71,7 +71,7 @@ async def load_model(state: AgentState) -> dict[str, Any]:
         else:
             events.append(make_event(
                 "load_model", "warning",
-                f"Unknown preset '{preset_name}' — ignoring",
+                f"Unknown preset '{preset_name}' -- ignoring",
             ))
 
     # Load model

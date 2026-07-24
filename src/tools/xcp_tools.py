@@ -1,5 +1,5 @@
 """
-XCP Tools — pyXCP wrappers for real ECU measurement/calibration.
+XCP Tools -- pyXCP wrappers for real ECU measurement/calibration.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ try:
     HAS_XCP = True
 except ImportError:
     HAS_XCP = False
-    logger.warning("pyXCP not available — XCP tools will be mocked")
+    logger.warning("pyXCP not available -- XCP tools will be mocked")
 
 
 XCP_TOOLS: list[dict] = [

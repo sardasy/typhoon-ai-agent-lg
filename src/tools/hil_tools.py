@@ -1,5 +1,5 @@
 """
-HIL Tools — Typhoon HIL API wrappers exposed as Claude tool_use functions.
+HIL Tools -- Typhoon HIL API wrappers exposed as Claude tool_use functions.
 
 Each tool has:
   - A JSON schema (sent to Claude API as tool definition)
@@ -24,7 +24,7 @@ try:
     HAS_TYPHOON = True
 except ImportError:
     HAS_TYPHOON = False
-    logger.warning("Typhoon HIL API not available — using mock mode")
+    logger.warning("Typhoon HIL API not available -- using mock mode")
 
 
 # ---------------------------------------------------------------------------

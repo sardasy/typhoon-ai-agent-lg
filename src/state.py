@@ -1,5 +1,5 @@
 """
-LangGraph State — the single TypedDict that flows through every node.
+LangGraph State -- the single TypedDict that flows through every node.
 
 Design principle: Each node reads what it needs, writes what it produces.
 LangGraph merges partial returns into the running state automatically.

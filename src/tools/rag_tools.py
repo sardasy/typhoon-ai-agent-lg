@@ -1,5 +1,5 @@
 """
-RAG Tools — vector search for standards, API docs, test history.
+RAG Tools -- vector search for standards, API docs, test history.
 
 Backend priority: ChromaDB (embedded, no server) > Qdrant > mock KB.
 ChromaDB is the default; a populated `chroma_db/` directory is required.

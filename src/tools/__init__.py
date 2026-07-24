@@ -1,5 +1,5 @@
 """
-Tool Registry — all tools available to the AI Agent via Claude tool_use.
+Tool Registry -- all tools available to the AI Agent via Claude tool_use.
 """
 
 from .can_tools import CAN_TOOLS, CANToolExecutor
