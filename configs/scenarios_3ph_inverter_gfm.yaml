@@ -107,7 +107,7 @@ scenarios:
   gfm_steady_state_zero_export:
     description: "Steady-state at Pref=0, Qref=0 -- Va RMS within +/-5% of nominal"
     category: "grid_compliance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 0.0
@@ -121,7 +121,7 @@ scenarios:
   gfm_active_power_tracking_med:
     description: "Pe tracks Pref=5kW within +/-10% after 3s settle"
     category: "control_performance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 5000.0
@@ -135,7 +135,7 @@ scenarios:
   gfm_reactive_power_tracking:
     description: "Qe tracks Qref=2kVAr within +/-10% after 3s settle"
     category: "control_performance"
-    standard_ref: "IEEE 2800-2022 Section 9"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_steady_state"
       Pref_w: 0.0
@@ -153,7 +153,7 @@ scenarios:
   gfm_inertia_pref_step_nominal:
     description: "Pref step 2->6 kW with nominal J=0.3, check RoCoF bound"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.3
@@ -170,7 +170,7 @@ scenarios:
   gfm_inertia_low_J_oscillation:
     description: "Same step with J=0.1 -- expect larger RoCoF / oscillation"
     category: "grid_support"
-    standard_ref: "IEEE 2800-2022 Section 7.2.2"
+    standard_ref: "IEEE 2800-2022 Clause 7"
     parameters:
       fault_template: "vsm_pref_step"
       J: 0.1
@@ -190,7 +190,7 @@ scenarios:
   gfm_phase_jump_10deg:
     description: "10 degree grid phase step, inverter must resync"
     category: "grid_disturbance"
-    standard_ref: "IEEE 2800-2022 Section 7.3"
+    standard_ref: "IEEE 2800-2022 Clause 7.3.2.4"
     parameters:
       fault_template: "phase_jump"
       signal_ac_sources: ["Vgrid"]
@@ -205,7 +205,7 @@ scenarios:
   gfm_phase_jump_20deg:
     description: "20 degree grid phase step (within IEEE 2800 25 deg cap)"
     category: "grid_disturbance"
-    standard_ref: "IEEE 2800-2022 Section 7.3"
+    standard_ref: "IEEE 2800-2022 Clause 7.3.2.4"
     parameters:
       fault_template: "phase_jump"
       signal_ac_sources: ["Vgrid"]
