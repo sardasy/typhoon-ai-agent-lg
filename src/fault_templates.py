@@ -14,6 +14,7 @@ never mutate plant-model parameters (CLAUDE.md safety rule #1).
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -339,6 +340,64 @@ async def _safe_sleep(seconds: float, *, hard_max: float) -> None:
     await asyncio.wait_for(asyncio.sleep(bounded), timeout=bounded + 1.0)
 
 
+async def _grid_init(hil: Any, params: dict) -> None:
+    """Optional pre-stimulus: energise an AC source (and DC bus if given).
+
+    Schematics such as 3ph_inverter.tse leave the Three Phase Voltage Source
+    at its class default (``init_rms_value=0.0``, ``init_frequency=50.0``),
+    so VSM templates that only write SCADA inputs end up testing against a
+    dead grid. Scenarios opt in by adding a ``grid_init`` dict:
+
+        grid_init:
+          source:    "Vgrid"   # name of the 3-phase source (required)
+          rms:       220.0     # line-to-neutral RMS voltage (required)
+          frequency: 60.0      # Hz (required)
+          phase:     0.0       # degrees, default 0
+          dc_source: "Vdc_link"  # optional
+          dc_value:  700.0     # optional constant for the DC source
+          settle_s:  0.2       # optional post-init settle, default 0.2
+
+    No-op when ``grid_init`` is absent, so every existing scenario still
+    behaves identically.
+    """
+    init = params.get("grid_init")
+    if not init:
+        return
+
+    source = init.get("source")
+    rms = init.get("rms")
+    freq = init.get("frequency")
+    if not source or rms is None or freq is None:
+        raise ValueError(
+            "grid_init requires 'source', 'rms', and 'frequency'; "
+            f"got {init!r}"
+        )
+
+    # hil_signal_write's sine path expects peak ``value`` and computes
+    # rms = value / sqrt(2) internally; convert from YAML-friendly RMS.
+    amp = float(rms) * math.sqrt(2)
+    phase = float(init.get("phase", 0.0))
+
+    await hil.execute("hil_signal_write", {
+        "signal": source,
+        "waveform": "sine",
+        "value": amp,
+        "frequency_hz": float(freq),
+        "phase_deg": phase,
+    })
+
+    dc_source = init.get("dc_source")
+    dc_value = init.get("dc_value")
+    if dc_source is not None and dc_value is not None:
+        await hil.execute("hil_signal_write", {
+            "signal": dc_source,
+            "value": float(dc_value),
+        })
+
+    settle_s = float(init.get("settle_s", 0.2))
+    await _safe_sleep(settle_s, hard_max=_MAX_SETTLE_S)
+
+
 async def _vsm_steady_state(hil: Any, params: dict) -> dict:
     """Configure VSM SCADA inputs and let the system reach steady state."""
     pref = params.get("Pref_w", 0.0)
@@ -347,6 +406,8 @@ async def _vsm_steady_state(hil: Any, params: dict) -> dict:
     d = params.get("D")
     kv = params.get("Kv")
     settle_s = params.get("settle_s", 2.0)
+
+    await _grid_init(hil, params)
 
     if j is not None:
         await hil.execute("hil_signal_write", {"signal": "J", "value": j})
@@ -371,6 +432,8 @@ async def _vsm_pref_step(hil: Any, params: dict) -> dict:
     d = params.get("D", 10.0)
     pre_step_s = params.get("pre_step_s", 3.0)
     capture_s = params.get("capture_s", 2.5)
+
+    await _grid_init(hil, params)
 
     await hil.execute("hil_signal_write", {"signal": "J", "value": j})
     await hil.execute("hil_signal_write", {"signal": "D", "value": d})

@@ -18,7 +18,7 @@ model:
   path: "C:/Users/junpr/Downloads/invertertest Target files/invertertest.cpd"
   device: "HIL101"
   timestep_us: 1.0
-  grid_voltage_rms_ll: 230
+  grid_voltage_rms_ll: 230             # historical: treated as LN RMS here
   grid_frequency_hz: 50
   carrier_freq_hz: 4000
   ieee_2800_category: "Cat A"          # transmission-connected IBR
@@ -26,6 +26,16 @@ model:
     J: 0.3
     D: 10.0
     Kv: 1.0e-4
+
+  # Shared grid energisation for every vsm_steady_state / vsm_pref_step
+  # scenario below. Keeps the grid source live so SCADA-only templates do
+  # not run against a dead bus when the .cpd leaves Vgrid at default 0 V.
+  grid_init_default: &grid_init_default
+    source: "Vgrid"
+    rms: 230.0
+    frequency: 50.0
+    phase: 0.0
+    settle_s: 0.5
 
 scenarios:
 
@@ -39,6 +49,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 0.0
       Qref_var: 0.0
       settle_s: 2.0
@@ -53,6 +64,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 2000.0
       Qref_var: 0.0
       settle_s: 3.0
@@ -67,6 +79,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 5000.0
       settle_s: 3.0
     measurements: ["Va", "Vb", "Vc", "Ia", "Ib", "Ic", "Pe"]
@@ -80,6 +93,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 9"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 8000.0
       settle_s: 3.0
     measurements: ["Va", "Vb", "Vc", "Ia", "Ib", "Ic", "Pe"]
@@ -114,6 +128,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.1
       D: 10.0
       Pref_initial_w: 2000.0
@@ -131,6 +146,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.3
       D: 10.0
       Pref_initial_w: 2000.0
@@ -147,6 +163,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.8
       D: 10.0
       Pref_initial_w: 2000.0
@@ -163,6 +180,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.2.2"
     parameters:
       fault_template: "vsm_pref_step"
+      grid_init: *grid_init_default
       J: 0.3
       Pref_initial_w: 2000.0
       Pref_step_w: 8000.0
@@ -397,6 +415,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.5 / IEEE 519"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 5000.0
       capture_window_cycles: 25
       fft_window: "hanning"
@@ -410,6 +429,7 @@ scenarios:
     standard_ref: "IEEE 2800-2022 Section 7.5 / IEEE 519"
     parameters:
       fault_template: "vsm_steady_state"
+      grid_init: *grid_init_default
       Pref_w: 5000.0
       capture_window_cycles: 25
     measurements: ["Ia"]
